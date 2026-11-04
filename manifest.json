@@ -1,0 +1,12 @@
+{
+  "display_name": "米白护眼 · 整套皮肤",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "skin.css",
+  "author": "zhaoyichan",
+  "version": "1.9.0",
+  "homePage": "https://github.com/zhaoyichan/mf-tavern-skin",
+  "auto_update": false
+}

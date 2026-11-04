@@ -1,0 +1,7 @@
+_backups/
+*.zip
+*.7z
+.DS_Store
+Thumbs.db
+*.log
+_ref/

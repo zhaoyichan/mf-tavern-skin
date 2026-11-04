@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1">
+<title>米白护眼 · 整套皮肤</title>
+<style>
+  :root{
+    --bg:#f3ede2; --paper:#fffdf8; --ink:#3d382f; --ink2:#6f6555; --ink3:#9a9080;
+    --line:rgba(150,136,110,.22); --line-s:rgba(150,136,110,.4);
+    --taupe:#8d8271; --gold:#c7b088; --gold-d:#9a8259;
+    --r:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 620px at 12% -10%, rgba(255,255,255,.9), transparent 62%),
+      radial-gradient(900px 520px at 100% 100%, rgba(199,176,136,.16), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:56px 24px 70px}
+  .eyebrow{font-size:11.5px;letter-spacing:.18em;color:var(--gold-d);font-weight:600;margin-bottom:12px}
+  h1{margin:0;font-size:31px;font-weight:650;letter-spacing:.01em;line-height:1.3}
+  .lead{margin:12px 0 0;font-size:14.5px;color:var(--ink2);line-height:1.8;max-width:620px}
+  .ver{
+    display:inline-flex;align-items:center;gap:6px;margin-top:16px;
+    font-size:11.5px;color:var(--ink2);padding:4px 10px;border-radius:20px;
+    background:rgba(255,253,248,.75);border:1px solid var(--line);
+  }
+  .ver i{width:6px;height:6px;border-radius:50%;background:var(--gold-d);display:block}
+
+  /* ── 胶囊示意 ── */
+  .capsule{
+    margin:30px 0 34px;padding:22px 26px;border-radius:var(--r);
+    background:linear-gradient(170deg,rgba(255,253,248,.94),rgba(246,239,226,.72));
+    border:1px solid rgba(186,170,141,.55);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 12px 30px -24px rgba(69,65,58,.7);
+  }
+  .cap-hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px}
+  .cap-hd b{font-size:13.5px;font-weight:600}
+  .cap-hd span{font-size:11.5px;color:var(--ink3)}
+  .cap-bar{
+    display:flex;align-items:center;gap:7px;padding:7px 9px;width:max-content;max-width:100%;
+    border-radius:14px;border:1px solid rgba(186,170,141,.78);
+    background:
+      linear-gradient(105deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.14) 26%, rgba(255,255,255,0) 46%),
+      linear-gradient(180deg, rgba(255,254,250,.92) 0%, rgba(246,239,226,.8) 52%, rgba(232,222,202,.66) 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(150,136,110,.16),
+               0 1px 1px rgba(90,78,58,.08),0 8px 18px -12px rgba(90,78,58,.4);
+    overflow-x:auto;
+  }
+  .cap-dot{
+    flex:none;width:26px;height:26px;border-radius:8px;
+    display:grid;place-items:center;color:var(--taupe);
+    background:rgba(255,255,255,.34);border:1px solid rgba(150,136,110,.18);
+  }
+  .cap-dot svg{width:14px;height:14px}
+  .cap-note{margin:12px 0 0;font-size:11.5px;color:var(--ink3);line-height:1.7}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{
+    position:relative;display:flex;flex-direction:column;
+    padding:24px 24px 22px;border-radius:var(--r);
+    background:linear-gradient(178deg,var(--paper),rgba(251,244,231,.82));
+    border:1px solid var(--line);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 14px 34px -30px rgba(69,65,58,.8);
+  }
+  .card:hover{border-color:var(--line-s)}
+  .ic{
+    width:36px;height:36px;border-radius:11px;display:grid;place-items:center;margin-bottom:16px;
+    color:var(--gold-d);background:rgba(199,176,136,.16);border:1px solid rgba(171,150,115,.36);
+  }
+  .ic svg{width:19px;height:19px}
+  .card h2{margin:0;font-size:17px;font-weight:650}
+  .card p{margin:9px 0 0;font-size:13px;color:var(--ink2);line-height:1.75;flex:1}
+  .url{
+    margin:16px 0 0;padding:10px 12px;border-radius:9px;font-size:11.5px;
+    background:rgba(150,136,110,.07);border:1px solid var(--line);
+    color:var(--ink2);word-break:break-all;line-height:1.6;
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  }
+  .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    height:36px;padding:0 15px;border-radius:9px;font-size:12.5px;font-weight:500;
+    cursor:pointer;text-decoration:none;transition:.16s ease;white-space:nowrap;
+    font-family:inherit;
+  }
+  .btn svg{width:14px;height:14px}
+  .btn-main{background:linear-gradient(180deg,#a8906a,#907955);color:#fffdf8;border:1px solid rgba(120,100,70,.5)}
+  .btn-main:hover{filter:brightness(1.06)}
+  .btn-gh{background:rgba(255,253,248,.9);color:var(--ink);border:1px solid var(--line-s)}
+  .btn-gh:hover{background:#fff;box-shadow:0 6px 16px -12px rgba(69,65,58,.7)}
+  .shot{
+    margin-top:16px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+    background:#fff;aspect-ratio:16/10;
+  }
+  .shot img{width:100%;height:100%;object-fit:cover;object-position:top left;display:block}
+  .tip{
+    margin:24px 0 0;padding:14px 18px;border-radius:11px;font-size:12.5px;line-height:1.75;
+    color:var(--ink2);background:rgba(255,253,248,.6);border:1px dashed var(--line-s);
+  }
+  .tip b{color:var(--ink);font-weight:600}
+  footer{margin-top:34px;font-size:11.5px;color:var(--ink3);line-height:1.8}
+  footer a{color:var(--gold-d);text-decoration:none}
+  #toast{
+    position:fixed;left:50%;bottom:28px;transform:translate(-50%,14px);
+    padding:10px 18px;border-radius:10px;font-size:12.5px;
+    background:rgba(61,56,47,.94);color:#fffdf8;opacity:0;pointer-events:none;
+    transition:.22s ease;z-index:9;box-shadow:0 10px 26px -14px rgba(0,0,0,.6);
+  }
+  #toast.on{opacity:1;transform:translate(-50%,0)}
+  @media (max-width:720px){
+    .wrap{padding:34px 16px 48px}
+    h1{font-size:24px}
+    .lead{font-size:13px}
+    .grid{grid-template-columns:1fr;gap:14px}
+    .card{padding:20px}
+    .capsule{padding:18px 16px}
+    .cap-hd{flex-direction:column;align-items:flex-start;gap:5px}
+    .cap-hd span{font-size:11px;line-height:1.5}
+    .cap-dot{width:24px;height:24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">M F &nbsp;·&nbsp; T A V E R N &nbsp; S K I N</div>
+  <h1>米白护眼 · 整套皮肤</h1>
+  <p class="lead">酒馆（SillyTavern / TauriTavern）的一整套米白外观与界面改造，收在一个扩展里。装上它，外观就是这个样子，不用手改 user.css。</p>
+  <div class="ver"><i></i> v1.9.0 · 扩展本体 + 世界书布局预览</div>
+
+  <!-- 顶栏胶囊示意：纯 SVG/CSS 绘制，标注为示意，避免误认为是截图 -->
+  <div class="capsule">
+    <div class="cap-hd"><b>顶栏胶囊 · 示意</b><span>靠左上浮、只挡住自己那一小块，其余正文照常露出</span></div>
+    <div class="cap-bar" aria-label="顶栏胶囊示意">
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 5.2v3.1l2 1.3"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.4h10.8M2.6 8h10.8M2.6 11.6h10.8"/><circle cx="6" cy="4.4" r="1.3" fill="#fffdf8"/><circle cx="10" cy="8" r="1.3" fill="#fffdf8"/><circle cx="7" cy="11.6" r="1.3" fill="#fffdf8"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.2 2.8h7.6v10.4H4.2zM6.4 5.8h3.2M6.4 8.2h3.2M6.4 10.6h2"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.8V3.2h10v9.6M6 8h4M6 5.4h4M6 10.6h2.6"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="6" r="2.6"/><path d="M3.4 13c.5-2.2 2.3-3.4 4.6-3.4s4.1 1.2 4.6 3.4"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="3.2" width="10.8" height="9.6" rx="1.4"/><circle cx="6" cy="6.6" r="1.1"/><path d="m3 11 3-2.6 2.6 2 2-1.6 2.4 2.2"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.4 9.6 6l3.9.4-2.9 2.6.8 3.8L8 10.9l-3.4 1.9.8-3.8L2.5 6.4 6.4 6z"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.4h10M3 8h10M3 10.6h6"/><path d="m11.4 10.6 1.6 1.6 2-2.4" transform="translate(-2 -1)"/></svg></div>
+      <div class="cap-dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.8v10.4M2.8 8h10.4"/></svg></div>
+    </div>
+    <p class="cap-note">上面是结构示意，不是截图。真实效果（半透玻璃、受光面、正文字号、隐藏与一键还原原生）要装进酒馆才看得到。</p>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.6v10M6.8 9.6 10 12.8l3.2-3.2"/><path d="M3.4 13.6v2a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8v-2"/></svg></div>
+      <h2>把皮肤装进酒馆</h2>
+      <p>在酒馆「扩展 → 从 URL 安装」粘贴下面这个地址。手机、别的电脑都一样，复制链接发过去就能用。也可以直接下 zip 手动放进 <code>third-party/</code>。</p>
+      <div class="url" id="repoUrl">https://github.com/zhaoyichan/mf-tavern-skin</div>
+      <div class="acts">
+        <button class="btn btn-main" id="btnCopy"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6"/><path d="M10.4 5.6V4a1.4 1.4 0 0 0-1.4-1.4H4A1.4 1.4 0 0 0 2.6 4v5a1.4 1.4 0 0 0 1.4 1.4h1.6"/></svg>复制仓库链接</button>
+        <a class="btn btn-gh" href="https://github.com/zhaoyichan/mf-tavern-skin/archive/refs/heads/main.zip">下载 zip</a>
+        <a class="btn btn-gh" href="https://github.com/zhaoyichan/mf-tavern-skin">打开仓库</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 4.2h5.2c1 0 1.8.8 1.8 1.8v10c0-1-.8-1.8-1.8-1.8H3.4zM16.6 4.2h-5.2c-1 0-1.8.8-1.8 1.8v10c0-1 .8-1.8 1.8-1.8h5.2z"/></svg></div>
+      <h2>世界书 · 更好管理的布局</h2>
+      <p>三栏样式稿：左边目录筛选，中间可多选的紧凑列表，右边常驻编辑器。能点、能搜、能批量操作，是给人看样子用的，还没装进扩展。</p>
+      <div class="shot"><img src="preview-world-info.png" alt="世界书三栏管理布局预览"></div>
+      <div class="acts">
+        <a class="btn btn-main" href="world-info-manager.html">打开可交互预览</a>
+      </div>
+    </section>
+  </div>
+
+  <div class="tip"><b>注意：</b>这个仓库根目录就是扩展本体（<code>manifest.json</code> + <code>index.js</code> + <code>skin.css</code>），<code>docs/</code> 只放预览页，不会被酒馆当扩展加载。装好后在「扩展设置」里有<b>「还原原生 / 用回扩展顶栏」双向开关</b>，随时能退回酒馆原来的样子，不会卡住回不去。</div>
+
+  <footer>
+    仓库：<a href="https://github.com/zhaoyichan/mf-tavern-skin">zhaoyichan/mf-tavern-skin</a> · 关键数据与踩坑清单写在 README 顶部<br>
+    v1.9.0 · 米白护眼整套皮肤
+  </footer>
+</div>
+<div id="toast"></div>
+<script>
+(function(){
+  var t = document.getElementById('toast');
+  function toast(msg){
+    t.textContent = msg; t.classList.add('on');
+    clearTimeout(t._tm); t._tm = setTimeout(function(){ t.classList.remove('on'); }, 1900);
+  }
+  document.getElementById('btnCopy').addEventListener('click', function(){
+    var text = document.getElementById('repoUrl').textContent.trim();
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch(e){}
+      document.body.removeChild(ta);
+      if (ok) toast('已复制，发给别人就能装');
+      else { window.prompt('长按/手动复制这个链接：', text); }
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function(){ toast('已复制，发给别人就能装'); }, fallback);
+    } else fallback();
+  });
+})();
+</script>
+</body>
+</html>

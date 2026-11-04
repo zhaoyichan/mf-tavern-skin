@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1">
+<title>世界书 · 管理视图（样式稿）</title>
+<!--
+═══════════════════════════════════════════════════════════════════════════
+  世界书 · 管理视图  样式稿 v1（2026-11-04 19:0x）
+  ───────────────────────────────────────────────────────────────────────
+  ★ 本文件性质：纯样式稿 / 交互演示。数据是假的，交互是真的，刷新即重置。
+    用来给用户看布局，不是能装进酒馆的成品。上一个 api-profiles.html 已按
+    用户要求搁置，不再继续。
+
+  ★ 现状（读真机 DOM 得来的，不是猜）
+    来源：D:/tavern-skin/ref/st_index.html（酒馆真实 index.html）
+         frontend-templates/worldInfoKeywordHeaders.html
+         ref/st_script.js 里 #OpenAllWIEntries 的处理
+    · 编辑器 = #world_popup
+      第 1 排：world_create_button / world_editor_select(选书) / 导入 / 导出 /
+              改名 / 复制 / 删除
+      第 2 排：world_popup_new(新条目) / OpenAllWIEntries(全展开) /
+              CloseAllWIEntries(全折叠) / world_backfill_memos(回填备注) /
+              world_apply_current_sorting / world_info_search(搜索) /
+              world_info_sort_order(**14 种排序**) / world_refresh / 分页
+      条目区 = #world_popup_entries_list，条目是 .inline-drawer 折叠抽屉
+    · 表头列（worldInfoKeywordHeaders.html）：
+      Title/Memo · Strategy · Position · Depth · Order · Trigger %
+    · 展开一条 = #entry_edit_template 里的一整屏表单：
+      主关键词 / 逻辑(AND ANY…) / 可选过滤 / Outlet / 扫描深度 / 大小写 /
+      整词 / 组评分 / Automation ID / 递归层级 / 正文 + 4 个递归复选 /
+      包含组 / 组权重 / 黏性 / 冷却 / 延迟 / 位置 / 深度 / 顺序 / 触发% /
+      角色过滤 / 备注 —— 几十个字段平铺。
+    · ★ 痛点（这版要解决的）
+      1) 改一个「启用/常驻/位置」要先展开整屏表单
+      2) 条目多了只能靠一个搜索框 + 14 项排序下拉 + 分页，没有目录
+      3) 没有多选，批量禁用/改位置/打标签/移动分组全做不到
+      4) 状态靠小灯（绿/蓝/灰）认，没有文字
+      5) 备注为空时列表里显示的是关键词，认不出是哪条
+
+  ★ 这版的设计口径（用户要「更方便管理」）
+    三栏：左侧目录（视图 + 分组 + 标签，带计数）/ 中间紧凑多行列表（可多选）/
+          右侧常驻编辑器（点条目即开，高级设置折叠，不用展开整屏）
+    + 选中后浮出批量操作条。状态一律用文字 + 圆点双编码，不只靠颜色。
+
+  ★ 真落地时的关键数据（别重新猜）
+    · 条目数据在世界书 JSON 的 entries 对象里，key 是 uid；
+      常用字段：key / keysecondary / comment(标题) / content / disable /
+      constant(常驻) / selective / position / depth / order / probability /
+      group / groupWeight / sticky / cooldown / delay / additive /
+      role / excludeRecursion / preventRecursion / delayUntilRecursionLevel …
+    · 「分组」「标签」不是酒馆原生字段 → 要在条目上挂自定义键（如 mf_group /
+      mf_tags），或者按 comment 前缀解析。写回时必须保留原字段，别整对象替换。
+    · position: 0=before / 1=after / 2=atDepth / 3=outlet 等，按版本核对。
+    · 排序写回：酒馆有 world_apply_current_sorting 把当前排序固化为 order。
+    · token 数是估算，别当精确值展示。
+    · 配色沿用皮肤：米白 + taupe #8d8271 + 浅金 #c7b088，不要绿色。
+      图标一律内联 SVG，不用 emoji。
+    · file:// 下 localStorage origin 为 null → 演示状态只放内存，刷新重置（故意的）。
+═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+:root{
+  --bg:#f2ede3;
+  --paper:#fffdf8;
+  --ink:#332e27;
+  --ink2:#6d6558;
+  --ink3:#9a9184;
+  --taupe:#8d8271;
+  --line:rgba(150,136,110,.22);
+  --line-s:rgba(150,136,110,.38);
+  --gold:#c7b088;
+  --gold-d:#ab9673;
+  --gold-bg:rgba(199,176,136,.18);
+  --r:12px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  overflow:hidden;
+  background:var(--bg);color:var(--ink);
+  font:14px/1.55 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(150,136,110,.28);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(150,136,110,.45);background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{height:100vh;display:flex;flex-direction:column}
+
+/* ── 顶栏 ─────────────────────────────────────────── */
+.top{
+  flex:none;height:62px;display:flex;align-items:center;gap:16px;padding:0 20px;
+  background:linear-gradient(180deg,rgba(255,253,248,.95),rgba(250,245,235,.92));
+  border-bottom:1px solid var(--line-s);position:relative;z-index:6;
+}
+.top-brand{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+.top-brand b{font-size:17px;font-weight:600;letter-spacing:.02em}
+.top-brand small{font-size:11.5px;color:var(--ink3)}
+.book{
+  display:flex;align-items:center;gap:9px;height:34px;padding:0 12px;border-radius:9px;
+  background:#fffdf9;border:1px solid var(--line-s);font-size:13px;font-weight:600;
+}
+.book svg{color:var(--taupe)}
+.book .cnt{font-weight:400;color:var(--ink3);font-size:12px}
+.top-search{
+  flex:1;min-width:120px;max-width:420px;display:flex;align-items:center;gap:9px;
+  height:34px;padding:0 12px;border-radius:9px;background:rgba(255,253,248,.8);
+  border:1px solid var(--line);transition:.16s;
+}
+.top-search:focus-within{background:#fffdf8;border-color:rgba(171,150,115,.6);box-shadow:0 0 0 3px rgba(199,176,136,.14)}
+.top-search svg{color:var(--ink3);flex:none}
+.top-search input{flex:1;border:0;outline:none;background:transparent;font-size:13px;min-width:0}
+.top-search input::placeholder{color:var(--ink3)}
+.top-sp{flex:1}
+.btn{
+  display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 13px;
+  border-radius:9px;border:1px solid var(--line-s);background:rgba(255,253,248,.7);
+  font-size:12.5px;color:var(--ink2);white-space:nowrap;transition:.15s;
+}
+.btn:hover{background:#fffdf8;color:var(--taupe-d,#6f6555);border-color:rgba(171,150,115,.6)}
+.btn svg{flex:none}
+.btn-solid{
+  background:linear-gradient(180deg,#fdf8ee,#f3e9d6);border-color:rgba(171,150,115,.55);
+  color:#6f6555;font-weight:500;box-shadow:0 1px 0 rgba(255,255,255,.9) inset;
+}
+.btn-solid:hover{background:linear-gradient(180deg,#fffdf7,#f7efdf)}
+.btn-quiet{background:transparent;border-color:transparent;color:var(--ink3)}
+.btn-quiet:hover{background:rgba(255,253,248,.9);color:var(--ink2)}
+
+/* ── 三栏骨架 ──────────────────────────────────────── */
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:212px minmax(0,1fr) 356px}
+.side{
+  min-height:0;overflow-y:auto;background:rgba(250,246,238,.55);
+  border-right:1px solid var(--line);padding:16px 10px 30px;
+}
+.center{min-height:0;display:flex;flex-direction:column;background:rgba(255,253,248,.34)}
+.editor{
+  min-height:0;overflow-y:auto;background:linear-gradient(180deg,rgba(255,253,248,.8),rgba(250,246,237,.6));
+  border-left:1px solid var(--line);
+}
+
+/* ── 左栏 ─────────────────────────────────────────── */
+.nav-h{font-size:10.5px;letter-spacing:.16em;color:var(--ink3);padding:0 10px;margin:8px 0 8px}
+.nav-h:not(:first-child){margin-top:26px}
+.nav-i{
+  position:relative;display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;
+  border-radius:8px;font-size:13.5px;color:var(--ink2);cursor:pointer;transition:.14s;
+  white-space:nowrap;
+}
+.nav-i:hover{background:rgba(255,253,248,.8);color:var(--ink)}
+.nav-i.on{background:var(--gold-bg);color:#6b6047;font-weight:500}
+.nav-i.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2.5px;border-radius:0 3px 3px 0;background:var(--gold-d)}
+.nav-i .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+.nav-i .num{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.nav-i.on .num{color:var(--gold-d)}
+.nav-i svg{flex:none;color:var(--ink3)}
+.nav-i.on svg{color:var(--gold-d)}
+.nav-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot-always{background:var(--gold-d)}
+.dot-key{border:1.5px solid var(--taupe);background:transparent}
+.dot-off{background:rgba(150,136,110,.28)}
+
+/* ── 中栏：工具条 ──────────────────────────────────── */
+.tools{
+  flex:none;display:flex;align-items:center;gap:10px;padding:12px 16px;
+  border-bottom:1px solid var(--line);background:rgba(255,253,248,.6);flex-wrap:wrap;
+}
+.chk{
+  width:16px;height:16px;border-radius:4px;border:1.5px solid var(--line-s);
+  background:#fffdf9;display:grid;place-items:center;flex:none;cursor:pointer;transition:.14s;
+}
+.chk svg{opacity:0;color:#fff}
+.chk.on{background:var(--gold-d);border-color:var(--gold-d)}
+.chk.on svg{opacity:1}
+.chk.mixed{background:rgba(199,176,136,.5);border-color:var(--gold-d)}
+.chk.mixed::after{content:"";width:8px;height:2px;background:#fff;border-radius:2px}
+.tools-l{display:flex;align-items:center;gap:9px;color:var(--ink2);font-size:12.5px;cursor:pointer;user-select:none}
+.seg{display:flex;gap:4px}
+.seg button{
+  height:28px;padding:0 10px;border-radius:7px;border:1px solid transparent;
+  background:transparent;font-size:12px;color:var(--ink2);transition:.14s;
+}
+.seg button:hover{background:rgba(255,253,248,.9);border-color:var(--line)}
+.seg button.on{background:var(--gold-bg);border-color:rgba(171,150,115,.42);color:#6b6047;font-weight:500}
+.tools-sp{flex:1}
+.tools small{font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.sort{
+  height:28px;padding:0 9px;border-radius:7px;border:1px solid var(--line);
+  background:rgba(255,253,248,.8);font-size:12px;color:var(--ink2);outline:none;
+}
+
+/* ── 中栏：表头 + 行 ───────────────────────────────── */
+.thead{
+  flex:none;display:grid;grid-template-columns:34px minmax(0,1fr) 92px 62px 56px;
+  gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--ink3);letter-spacing:.03em;background:rgba(250,246,238,.45);
+}
+.rows{flex:1;min-height:0;overflow-y:auto;padding-bottom:76px}
+.row{
+  display:grid;grid-template-columns:34px minmax(0,1fr) 92px 62px 56px;
+  gap:10px;align-items:center;padding:9px 16px;min-height:58px;
+  border-bottom:1px solid rgba(150,136,110,.18);cursor:pointer;transition:.13s;
+}
+.row:hover{background:rgba(255,253,248,.92)}
+.row.on{background:linear-gradient(90deg,rgba(199,176,136,.19),rgba(199,176,136,.07))}
+.row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold-d)}
+.row{position:relative}
+.row.checked{background:rgba(199,176,136,.1)}
+.r-main{min-width:0}
+.r-line1{display:flex;align-items:center;gap:8px;min-width:0}
+.r-title{font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-title.off{color:var(--ink3);font-weight:500;text-decoration:line-through;text-decoration-color:rgba(154,145,132,.6)}
+.st{
+  flex:none;font-size:11px;padding:1.5px 6px;border-radius:5px;white-space:nowrap;
+  border:1px solid transparent;
+}
+.st-always{background:rgba(199,176,136,.28);border-color:rgba(171,150,115,.5);color:#795f3e;font-weight:500}
+.st-key{background:rgba(150,136,110,.1);border-color:rgba(150,136,110,.25);color:#6f6555}
+.st-off{background:rgba(150,136,110,.07);border-color:rgba(150,136,110,.16);color:var(--ink3)}
+.r-line2{display:flex;align-items:center;gap:6px;margin-top:3px;min-width:0;overflow:hidden}
+.key{
+  font-size:11.5px;padding:1px 6px;border-radius:4px;white-space:nowrap;
+  background:rgba(255,253,248,.9);border:1px solid rgba(150,136,110,.2);color:var(--ink2);
+}
+.key.more{color:var(--ink3);border-style:dashed}
+.r-col{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-col small{color:var(--ink3);font-size:11px}
+.r-num{font-variant-numeric:tabular-nums;text-align:right;font-size:12.5px;color:var(--ink2)}
+.r-num small{color:var(--ink3)}
+.r-acts{display:flex;gap:2px;justify-content:flex-end;opacity:0;transition:.14s}
+.row:hover .r-acts,.row.on .r-acts{opacity:1}
+.ico{
+  width:27px;height:27px;border-radius:7px;display:grid;place-items:center;
+  background:transparent;border:1px solid transparent;color:var(--ink3);transition:.14s;
+}
+.ico:hover{background:#fffdf8;border-color:var(--line);color:var(--taupe)}
+.ico.danger:hover{color:#a4654f;border-color:rgba(164,101,79,.28);background:rgba(164,101,79,.06)}
+.empty{padding:60px 20px;text-align:center;color:var(--ink3)}
+.empty b{display:block;color:var(--ink2);font-size:14px;margin-bottom:5px;font-weight:600}
+.empty span{font-size:12.5px}
+
+/* ── 右栏：编辑器 ──────────────────────────────────── */
+.ed-hd{
+  position:sticky;top:0;z-index:3;padding:16px 18px 12px;
+  background:linear-gradient(180deg,rgba(255,253,248,.98),rgba(255,253,248,.9));
+  border-bottom:1px solid var(--line);backdrop-filter:blur(8px);
+}
+.ed-hd .kicker{font-size:10.5px;letter-spacing:.16em;color:var(--ink3);margin-bottom:6px}
+.ed-hd h2{margin:0;font-size:16px;font-weight:600;line-height:1.4}
+.ed-hd .meta{margin-top:5px;font-size:11.5px;color:var(--ink3)}
+.ed-bd{padding:16px 18px 26px}
+.fld{margin-bottom:14px}
+.fld > label{display:block;font-size:11px;color:var(--ink3);letter-spacing:.04em;margin-bottom:6px}
+.inp,textarea.inp{
+  width:100%;padding:8px 10px;border-radius:9px;outline:none;
+  background:#fffdf9;border:1px solid var(--line-s);font-size:13px;transition:.15s;
+}
+.inp:focus,textarea.inp:focus{border-color:rgba(171,150,115,.7);box-shadow:0 0 0 3px rgba(199,176,136,.15)}
+textarea.inp{resize:vertical;min-height:124px;line-height:1.7}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chips .key{padding:4px 8px;font-size:11.5px}
+.chips .add{border-style:dashed;background:transparent;cursor:pointer;color:var(--ink3)}
+.sw-row{display:flex;gap:8px;margin-bottom:14px}
+.sw{
+  flex:1;display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;
+  background:rgba(255,253,248,.7);border:1px solid var(--line);cursor:pointer;transition:.15s;
+}
+.sw:hover{border-color:var(--line-s)}
+.sw.on{background:linear-gradient(180deg,#fffdf8,#fbf4e6);border-color:rgba(171,150,115,.55)}
+.tg{
+  flex:none;width:30px;height:17px;border-radius:20px;background:rgba(150,136,110,.28);
+  position:relative;transition:.18s;
+}
+.tg::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.sw.on .tg{background:var(--gold-d)}
+.sw.on .tg::after{transform:translateX(13px)}
+.sw b{font-size:12.5px;font-weight:500}
+.sw small{display:block;font-size:10.5px;color:var(--ink3);line-height:1.3}
+.sect{border-top:1px solid var(--line);margin-top:6px}
+.sect-h{
+  display:flex;align-items:center;gap:8px;padding:12px 2px;cursor:pointer;
+  font-size:12.5px;font-weight:500;color:var(--ink2);
+}
+.sect-h:hover{color:var(--ink)}
+.sect-h .arw{margin-left:auto;transition:.2s;color:var(--ink3)}
+.sect.open .sect-h .arw{transform:rotate(90deg)}
+.sect-b{display:none;padding:0 2px 12px}
+.sect.open .sect-b{display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid2 .fld{margin-bottom:10px}
+.ed-ft{
+  display:flex;align-items:center;gap:9px;padding:13px 18px calc(16px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--line);background:rgba(250,246,238,.7);
+}
+.ed-ft .saved{font-size:11.5px;color:var(--ink3);display:flex;align-items:center;gap:5px;margin-right:auto}
+.ed-ft .saved svg{color:var(--gold-d)}
+.ed-blank{padding:80px 26px;text-align:center;color:var(--ink3)}
+.ed-blank svg{color:rgba(171,150,115,.65);margin-bottom:14px}
+.ed-blank b{display:block;color:var(--ink2);font-size:14px;margin-bottom:6px;font-weight:600}
+.ed-blank span{font-size:12.5px;line-height:1.8}
+
+/* ── 批量操作条 ────────────────────────────────────── */
+.bulk{
+  position:fixed;left:50%;bottom:24px;transform:translate(-50%,16px);z-index:20;
+  display:flex;align-items:center;gap:8px;padding:9px 12px 9px 16px;border-radius:14px;
+  background:linear-gradient(180deg,#fffdf8,#f7f0e2);
+  border:1px solid rgba(171,150,115,.5);
+  box-shadow:0 1px 0 #fff inset, 0 18px 40px -24px rgba(69,65,58,.75);
+  opacity:0;pointer-events:none;transition:.22s cubic-bezier(.2,.8,.3,1);white-space:nowrap;
+}
+.bulk.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.bulk .n{font-size:13px;font-weight:600;color:#6f6555;margin-right:4px}
+.bulk .div{width:1px;height:22px;background:var(--line-s);margin:0 3px}
+.bulk button{
+  height:30px;padding:0 11px;border-radius:8px;border:1px solid transparent;
+  background:transparent;font-size:12px;color:var(--ink2);display:inline-flex;align-items:center;gap:6px;
+}
+.bulk button:hover{background:#fffdf8;border-color:var(--line-s);color:var(--ink)}
+.bulk button.danger:hover{color:#a4654f;border-color:rgba(164,101,79,.3);background:rgba(164,101,79,.05)}
+.bulk .x{width:30px;padding:0;justify-content:center;color:var(--ink3)}
+.pop{
+  position:absolute;bottom:calc(100% + 10px);left:0;min-width:150px;padding:6px;
+  border-radius:11px;background:#fffdf8;border:1px solid rgba(171,150,115,.5);
+  box-shadow:0 16px 34px -22px rgba(69,65,58,.8);display:none;
+}
+.pop.on{display:block}
+.pop-i{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.pop-i:hover{background:var(--gold-bg);color:#6b6047}
+
+/* ── 对照现状弹层 ──────────────────────────────────── */
+.mask{position:fixed;inset:0;background:rgba(64,58,50,.3);backdrop-filter:blur(3px);z-index:40;opacity:0;pointer-events:none;transition:.2s}
+.mask.on{opacity:1;pointer-events:auto}
+.modal{
+  position:fixed;left:50%;top:50%;transform:translate(-50%,-48%) scale(.98);z-index:41;
+  width:min(700px,calc(100vw - 32px));max-height:86vh;overflow:auto;
+  border-radius:18px;background:linear-gradient(180deg,#fffdf8,#faf6ec);
+  border:1px solid rgba(199,176,136,.5);box-shadow:0 30px 70px -40px rgba(59,53,45,.9);
+  opacity:0;pointer-events:none;transition:.22s cubic-bezier(.2,.8,.3,1);
+}
+.modal.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.m-hd{display:flex;align-items:center;justify-content:space-between;padding:18px 22px 4px}
+.m-hd b{font-size:16px}
+.m-bd{padding:6px 22px 22px;font-size:13px;color:var(--ink2);line-height:1.8}
+.m-bd h4{margin:18px 0 8px;font-size:12px;letter-spacing:.1em;color:var(--ink3);font-weight:500}
+.old{
+  border:1px solid var(--line);border-radius:11px;background:rgba(255,253,248,.8);
+  padding:12px 14px;font-size:12px;color:var(--ink2);
+}
+.old .bar2{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.old .b2{padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:#fffdf9;color:var(--ink3);font-size:11px}
+.old .e{padding:8px 10px;border:1px solid var(--line);border-radius:7px;margin-top:6px;background:#fffdf9;display:flex;justify-content:space-between}
+.old .e.open2{border-color:rgba(171,150,115,.5);background:rgba(199,176,136,.08)}
+.old .e-fields{margin-top:7px;padding-left:10px;color:var(--ink3);font-size:11px;line-height:2}
+.m-bd ul{margin:8px 0;padding-left:20px}
+.m-bd li{margin:3px 0}
+.m-bd .hl{color:#8a7350;background:rgba(199,176,136,.16);padding:1px 4px;border-radius:4px}
+
+/* ── 手机 ─────────────────────────────────────────── */
+@media (max-width:1080px){
+  .cols{grid-template-columns:186px minmax(0,1fr)}
+  .editor{
+    position:fixed;right:0;top:62px;bottom:0;width:min(360px,88vw);z-index:10;
+    transform:translateX(100%);transition:.24s cubic-bezier(.2,.8,.3,1);
+    box-shadow:-18px 0 40px -30px rgba(69,65,58,.8);
+  }
+  .editor.on{transform:translateX(0)}
+  .ed-hd .close-ed{display:inline-flex}
+}
+@media (min-width:1081px){ .ed-hd .close-ed{display:none} }
+@media (max-width:760px){
+  .top{height:56px;padding:0 12px;gap:9px}
+  .top-brand small{display:none}
+  .top .btn-quiet span,.top #btnExport span{display:none}
+  .book{display:none}
+  #btnExport{width:34px;padding:0;justify-content:center}
+  .tools small{display:none}
+  .book{font-size:12px;padding:0 9px}
+  .book .cnt{display:none}
+  .cols{display:flex;flex-direction:column}
+  .side{
+    flex:none;display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding:9px 12px;
+    border-right:0;border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  .nav-h{display:none}
+  .nav-i{flex:none;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:20px;background:rgba(255,253,248,.6);font-size:12px}
+  .nav-i.on{border-color:rgba(171,150,115,.5)}
+  .nav-i.on::before{display:none}
+  .nav-i .num{margin-left:2px}
+  .center{flex:1}
+  .thead,.row{grid-template-columns:28px minmax(0,1fr) 54px;padding-left:12px;padding-right:12px;gap:7px}
+  .thead > :nth-child(3),.row > :nth-child(3),
+  .thead > :nth-child(4),.row > :nth-child(4){display:none}
+  .center{flex:1;min-height:0}
+  .top-sp{display:none}
+  .tools{padding:9px 12px;gap:7px}
+  .tools .seg button{padding:0 8px}
+  .top-search{max-width:none}
+  .editor{top:auto;bottom:0;left:0;right:0;width:100%;height:82vh;border-radius:18px 18px 0 0;
+          transform:translateY(100%);border-left:0;border-top:1px solid rgba(171,150,115,.5);
+          background:#fffdf8;box-shadow:0 -18px 44px -30px rgba(69,65,58,.9)}
+  .editor.on{transform:translateY(0)}
+  .bulk{left:12px;right:12px;bottom:12px;transform:translateY(16px);overflow-x:auto;justify-content:flex-start}
+  .bulk.on{transform:translateY(0)}
+  .bulk .n{flex:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 顶栏 -->
+  <header class="top">
+    <div class="top-brand"><b>世界书</b><small>管理视图</small></div>
+    <div class="book" id="bookBtn">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 3.2c2-.7 4-.5 5.5.6 1.5-1.1 3.5-1.3 5.5-.6v9.3c-2-.7-4-.5-5.5.6-1.5-1.1-3.5-1.3-5.5-.6zM8 3.8v9.3"/></svg>
+      砚舟 · 江湖设定集
+      <span class="cnt">· 18 条 / 4.7k tok</span>
+    </div>
+    <div class="top-search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.4"/><path d="m10.4 10.4 3 3"/></svg>
+      <input id="q" placeholder="搜标题、关键词、正文">
+    </div>
+    <div class="top-sp"></div>
+    <button class="btn btn-quiet" id="btnOld">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 2.6a5.4 5.4 0 1 0 5.4 5.4"/><path d="M8 5.2v3l2 1.3"/><path d="M11.2 2.4h2.2v2.2"/></svg>
+      <span>对照现状</span>
+    </button>
+    <button class="btn" id="btnExport">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.6v7M5.4 7 8 9.6 10.6 7"/><path d="M2.8 11v1.8a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1V11"/></svg>
+      <span>导出</span>
+    </button>
+    <button class="btn btn-solid" id="btnNew">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+      新条目
+    </button>
+  </header>
+
+  <!-- 三栏 -->
+  <div class="cols">
+    <!-- 左：目录 -->
+    <aside class="side" id="side"></aside>
+
+    <!-- 中：列表 -->
+    <main class="center">
+      <div class="tools">
+        <label class="tools-l" id="allChk"><span class="chk" id="allChkBox"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8.4 3.2 3.2L13 4.8"/></svg></span>全选</label>
+        <div class="seg" id="seg">
+          <button data-st="all" class="on">全部</button>
+          <button data-st="always">常驻</button>
+          <button data-st="key">触发</button>
+          <button data-st="off">停用</button>
+        </div>
+        <div class="tools-sp"></div>
+        <small id="sumInfo">18 条 · 2.4k tok</small>
+        <select class="sort" id="sort">
+          <option value="order">按 Order</option>
+          <option value="title">按标题</option>
+          <option value="tokens">按 Tokens</option>
+          <option value="trigger">按触发率</option>
+        </select>
+      </div>
+      <div class="thead">
+        <div></div><div>条目 / 关键词</div><div>位置 · 顺序</div><div>触发</div><div style="text-align:right">Tokens</div>
+      </div>
+      <div class="rows" id="rows"></div>
+    </main>
+
+    <!-- 右：编辑器 -->
+    <section class="editor" id="editor"></section>
+  </div>
+</div>
+
+<!-- 批量操作条 -->
+<div class="bulk" id="bulk">
+  <span class="n" id="bulkN">已选 0 条</span>
+  <div class="div"></div>
+  <button data-bulk="enable">启用</button>
+  <button data-bulk="disable">停用</button>
+  <button data-bulk="always">设为常驻</button>
+  <button data-bulk="group" id="popGroupBtn" style="position:relative">移动分组 ▾
+    <span class="pop" id="popGroup"></span>
+  </button>
+  <button data-bulk="tag" id="popTagBtn" style="position:relative">加标签 ▾
+    <span class="pop" id="popTag"></span>
+  </button>
+  <button data-bulk="delete" class="danger">删除</button>
+  <div class="div"></div>
+  <button class="x" id="bulkX" title="取消选择">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+  </button>
+</div>
+
+<!-- 对照现状 -->
+<div class="mask" id="mask"></div>
+<div class="modal" id="modal">
+  <div class="m-hd">
+    <b>现在的世界书编辑器长什么样</b>
+    <button class="ico" id="mX"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+  </div>
+  <div class="m-bd">
+    从真机 DOM 读出来的结构：<span class="hl">#world_popup</span> 两排工具按钮 + 一串折叠抽屉
+    <span class="hl">.inline-drawer</span>，表头是 Title/Memo · Strategy · Position · Depth · Order · Trigger%。
+    <div class="old" style="margin-top:12px">
+      <div class="bar2"><span class="b2">新建书</span><span class="b2">选书 ▾</span><span class="b2">导入</span><span class="b2">导出</span><span class="b2">改名</span><span class="b2">复制</span><span class="b2">删除</span></div>
+      <div class="bar2"><span class="b2">+ 新条目</span><span class="b2">全展开</span><span class="b2">全折叠</span><span class="b2">回填备注</span><span class="b2">搜索</span><span class="b2">排序（14 项）▾</span><span class="b2">分页</span></div>
+      <div class="e"><span>砚舟 · 人物卡</span><span style="color:var(--ink3)">常驻 · 位置 0 · 顺序 100</span></div>
+      <div class="e open2"><span>临安城 · 地理</span><span style="color:var(--ink3)">展开中 ▾</span>
+      </div>
+      <div class="e-fields">主关键词 · 逻辑 · 可选过滤 · Outlet · 扫描深度 · 大小写 · 整词 · 组评分 ·
+        Automation ID · 递归层级 · 正文 + 4 个递归复选 · 包含组 · 组权重 · 黏性 · 冷却 · 延迟 ·
+        位置 · 深度 · 顺序 · 触发% · 角色过滤 · 备注 …（一整屏）</div>
+      <div class="e"><span>雨夜规则</span><span style="color:var(--ink3)">触发 · 位置 1</span></div>
+    </div>
+
+    <h4>不方便的地方</h4>
+    <ul>
+      <li>改一个「启用 / 常驻 / 位置」都要先把整条展开，几十个字段扑面而来。</li>
+      <li>条目一多，只有一个搜索框 + 14 项排序下拉 + 分页，<b>没有目录、没有分组</b>。</li>
+      <li><b>没有多选</b>：批量停用、批量改位置、批量打标签、批量移动都做不到。</li>
+      <li>状态靠小灯颜色区分，没有文字，得记绿蓝灰各代表什么。</li>
+      <li>备注为空时列表里显示的是关键词，看不出是哪一条。</li>
+    </ul>
+
+    <h4>这版怎么改</h4>
+    <ul>
+      <li><b>左栏</b>：视图（全部 / 常驻 / 触发 / 停用）+ 分组 + 标签，都带数量，一点就筛。</li>
+      <li><b>中栏</b>：一行一条的紧凑列表，勾选框做多选，状态用文字 + 圆点双编码。</li>
+      <li><b>右栏</b>：常驻编辑器，点哪条编辑哪条；高级设置按「触发 / 位置 / 高级」折叠，默认只看基础四项。</li>
+      <li><b>底部</b>：选中若干条后浮出批量条，启用 / 停用 / 设常驻 / 移动分组 / 加标签 / 删除。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $ = function(s){ return document.querySelector(s); };
+var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); };
+
+/* ── 假数据（字段口径照酒馆 entries：comment/content/key/constant/disable/position/order…） ── */
+var GROUPS = ['人物','地点','势力','规则','道具','剧情'];
+var TAGS   = ['主线','常用','待校对','临时'];
+var ENTRIES = [
+  { id:1,  title:'砚舟 · 人物卡',      keys:['砚舟','阿砚'],           group:'人物', tags:['主线','常用'], mode:'always', pos:'前文', order:100, trigger:100, tokens:412, content:'砚舟，二十七岁，左手虎口有旧疤。话少，答应了的事一定做到。\n不主动提起三年前那场火。' },
+  { id:2,  title:'不许全知',            keys:['信息','知道'],           group:'规则', tags:['主线'],       mode:'always', pos:'前文', order:110, trigger:100, tokens:186, content:'每个 NPC 只知道自己的信息。不许因为「上下文里有」就默认角色知道。误会可以持续。' },
+  { id:3,  title:'叙事口径',            keys:['叙述','视角'],           group:'规则', tags:['主线','常用'], mode:'always', pos:'前文', order:120, trigger:100, tokens:224, content:'直叙、克制，不替角色下判断。不写「他心想其实……」。' },
+  { id:4,  title:'临安城 · 地理',       keys:['临安','城','街'],        group:'地点', tags:['主线'],       mode:'key',    pos:'@深度', order:200, trigger:100, tokens:538, content:'临安城依河而建，南市热闹、北巷安静。雨天石板路反光，夜里有打更声。' },
+  { id:5,  title:'雨夜规则',            keys:['雨','夜'],               group:'规则', tags:['常用'],       mode:'key',    pos:'后文', order:210, trigger:85,  tokens:142, content:'雨夜视线差，远处只看得见轮廓；脚步声会被雨盖住。' },
+  { id:6,  title:'听雨楼',              keys:['听雨楼','酒楼'],         group:'地点', tags:[],            mode:'key',    pos:'@深度', order:220, trigger:100, tokens:364, content:'听雨楼三层，二楼雅座临河。掌柜姓陆，记账从不出错。' },
+  { id:7,  title:'沈家 · 势力',         keys:['沈家','沈'],             group:'势力', tags:['主线'],       mode:'key',    pos:'@深度', order:230, trigger:90,  tokens:296, content:'沈家掌漕运，与官府往来密切。家主沈砚之，与砚舟同名不同人。' },
+  { id:8,  title:'旧疤的来历',          keys:['疤','左手','火'],        group:'剧情', tags:['待校对'],     mode:'key',    pos:'@深度', order:240, trigger:60,  tokens:318, content:'三年前那场火，砚舟只说是「烧的」。真相暂不揭露。' },
+  { id:9,  title:'青釭剑',              keys:['青釭','剑'],             group:'道具', tags:[],            mode:'key',    pos:'@深度', order:250, trigger:100, tokens:174, content:'剑鞘有裂纹，剑身无铭。砚舟不轻易出鞘。' },
+  { id:10, title:'陆掌柜',              keys:['陆掌柜','陆'],           group:'人物', tags:['常用'],       mode:'key',    pos:'@深度', order:260, trigger:100, tokens:248, content:'五十上下，说话慢，从不打听客人来路。' },
+  { id:11, title:'节令 · 中元',         keys:['中元','河灯'],           group:'剧情', tags:['临时'],       mode:'off',    pos:'@深度', order:270, trigger:100, tokens:202, content:'中元夜河灯浮满水面，城里人不出门。' },
+  { id:12, title:'漕运暗线',            keys:['漕运','船','货'],        group:'势力', tags:['待校对'],     mode:'key',    pos:'@深度', order:280, trigger:75,  tokens:426, content:'夜里进港的船不走正闸。这条线只写暗示，不写结论。' },
+  { id:13, title:'禁用：旧版人设',      keys:['砚舟'],                  group:'人物', tags:['待校对'],     mode:'off',    pos:'后文', order:290, trigger:100, tokens:512, content:'（已被新人物卡替换，留档勿启用）' },
+  { id:14, title:'称呼表',              keys:['称呼','叫'],             group:'规则', tags:['常用'],       mode:'key',    pos:'@深度', order:300, trigger:100, tokens:132, content:'他称对方「姑娘」；对方喊他「砚舟」，不喊姓氏。' },
+  { id:15, title:'北巷药铺',            keys:['药铺','北巷'],           group:'地点', tags:[],            mode:'key',    pos:'@深度', order:310, trigger:100, tokens:206, content:'药铺只在白天开门，柜台后常年一股当归味。' },
+  { id:16, title:'打更时辰',            keys:['更','时辰'],             group:'规则', tags:[],            mode:'off',    pos:'@深度', order:320, trigger:50,  tokens:98,  content:'一更戌时，三更子时。' },
+  { id:17, title:'未命名条目',          keys:['雪'],                    group:'剧情', tags:['临时'],       mode:'key',    pos:'@深度', order:330, trigger:100, tokens:64,  content:'（还没写内容）' },
+  { id:18, title:'旧地图',              keys:['地图','城图'],           group:'道具', tags:['待校对'],     mode:'key',    pos:'@深度', order:340, trigger:100, tokens:158, content:'图上北巷那一段被水浸过，字迹糊了。' }
+];
+
+var state = { view:'all', q:'', st:'all', sort:'order', sel:{}, edit:1, sections:{}, pop:null, edOpen:false };
+
+function entry(id){ for(var i=0;i<ENTRIES.length;i++) if(ENTRIES[i].id===id) return ENTRIES[i]; return null; }
+function visible(){
+  var q = state.q.toLowerCase();
+  return ENTRIES.filter(function(e){
+    if (state.view === 'always' && e.mode!=='always') return false;
+    if (state.view === 'key' && e.mode!=='key') return false;
+    if (state.view === 'off' && e.mode!=='off') return false;
+    if (state.view.indexOf('g:')===0 && e.group!==state.view.slice(2)) return false;
+    if (state.view.indexOf('t:')===0 && e.tags.indexOf(state.view.slice(2))<0) return false;
+    if (state.st!=='all' && e.mode!==state.st) return false;
+    if (q) {
+      var hay=(e.title+' '+e.keys.join(' ')+' '+e.content+' '+e.group+' '+e.tags.join(' ')).toLowerCase();
+      if (hay.indexOf(q)<0) return false;
+    }
+    return true;
+  });
+}
+function sorted(list){
+  var s=state.sort;
+  return list.slice().sort(function(a,b){
+    if(s==='title') return a.title.localeCompare(b.title,'zh');
+    if(s==='tokens') return b.tokens-a.tokens;
+    if(s==='trigger') return b.trigger-a.trigger;
+    return a.order-b.order;
+  });
+}
+function fmtTok(n){ return n>=1000 ? (n/1000).toFixed(1)+'k' : n; }
+function toast(msg){
+  var t=document.getElementById('toastEl');
+  if(!t){ t=document.createElement('div'); t.id='toastEl';
+    t.style.cssText='position:fixed;left:50%;bottom:88px;transform:translate(-50%,10px);padding:9px 16px;border-radius:11px;font-size:12.5px;background:rgba(64,58,50,.92);color:#fdf9f1;z-index:60;opacity:0;pointer-events:none;transition:.2s;box-shadow:0 14px 30px -20px rgba(0,0,0,.8)';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.classList.add('on'); t.style.opacity='1'; t.style.transform='translate(-50%,0)';
+  clearTimeout(t._t); t._t=setTimeout(function(){ t.style.opacity='0'; t.style.transform='translate(-50%,10px)'; },1700);
+}
+
+/* ── 左栏 ──────────────────────────────────────────── */
+function renderSide(){
+  var cnt={all:ENTRIES.length,always:0,key:0,off:0};
+  ENTRIES.forEach(function(e){ cnt[e.mode]++; });
+  var h='<div class="nav-h">视图</div>';
+  [['all','全部',null],['always','常驻','always'],['key','关键词触发','key'],['off','已停用','off']].forEach(function(v){
+    h+='<div class="nav-i'+(state.view===v[0]?' on':'')+'" data-v="'+v[0]+'">'+
+       (v[2]?'<span class="nav-dot dot-'+v[2]+'"></span>':'<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 3.2c2-.7 4-.5 5.5.6 1.5-1.1 3.5-1.3 5.5-.6v9.3c-2-.7-4-.5-5.5.6-1.5-1.1-3.5-1.3-5.5-.6z"/></svg>')+
+       '<span class="nm">'+v[1]+'</span><span class="num">'+cnt[v[0]]+'</span></div>';
+  });
+  h+='<div class="nav-h">分组</div>';
+  GROUPS.forEach(function(g){
+    var n=ENTRIES.filter(function(e){return e.group===g;}).length;
+    h+='<div class="nav-i'+(state.view==='g:'+g?' on':'')+'" data-v="g:'+g+'">'+
+       '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 4.6a1 1 0 0 1 1-1h3l1.3 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>'+
+       '<span class="nm">'+g+'</span><span class="num">'+n+'</span></div>';
+  });
+  h+='<div class="nav-h">标签</div>';
+  TAGS.forEach(function(t){
+    var n=ENTRIES.filter(function(e){return e.tags.indexOf(t)>=0;}).length;
+    h+='<div class="nav-i'+(state.view==='t:'+t?' on':'')+'" data-v="t:'+t+'">'+
+       '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.6 7.2V3.4a.8.8 0 0 1 .8-.8h3.8l6 6-4.6 4.6z"/><circle cx="5.3" cy="5.3" r="1"/></svg>'+
+       '<span class="nm">'+t+'</span><span class="num">'+n+'</span></div>';
+  });
+  $('#side').innerHTML=h;
+}
+
+/* ── 中栏 ──────────────────────────────────────────── */
+function renderRows(){
+  var list=sorted(visible());
+  var sum=list.reduce(function(a,e){return a+e.tokens;},0);
+  $('#sumInfo').textContent=list.length+' 条 · '+fmtTok(sum)+' tok';
+
+  if(!list.length){
+    $('#rows').innerHTML='<div class="empty"><b>这里没有条目</b><span>换个筛选，或者清空搜索</span></div>';
+  } else {
+    $('#rows').innerHTML=list.map(function(e){
+      var stCls=e.mode==='always'?'st-always':(e.mode==='key'?'st-key':'st-off');
+      var stTxt=e.mode==='always'?'常驻':(e.mode==='key'?'触发':'停用');
+      var keys=e.keys.slice(0,3).map(function(k){return '<span class="key">'+esc(k)+'</span>';}).join('')+
+               (e.keys.length>3?'<span class="key more">+'+(e.keys.length-3)+'</span>':'');
+      return '<div class="row'+(state.edit===e.id?' on':'')+(state.sel[e.id]?' checked':'')+'" data-id="'+e.id+'">'+
+        '<div><span class="chk'+(state.sel[e.id]?' on':'')+'" data-act="sel"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8.4 3.2 3.2L13 4.8"/></svg></span></div>'+
+        '<div class="r-main">'+
+          '<div class="r-line1"><span class="r-title'+(e.mode==='off'?' off':'')+'">'+esc(e.title)+'</span><span class="st '+stCls+'">'+stTxt+'</span></div>'+
+          '<div class="r-line2">'+keys+'</div>'+
+        '</div>'+
+        '<div class="r-col">'+esc(e.pos)+' <small>· '+e.order+'</small></div>'+
+        '<div class="r-col">'+(e.mode==='key'?e.trigger+'%':'<small>—</small>')+'</div>'+
+        '<div class="r-num">'+fmtTok(e.tokens)+'</div>'+
+      '</div>';
+    }).join('');
+  }
+  // 全选框状态
+  var ids=list.map(function(e){return e.id;});
+  var n=ids.filter(function(id){return state.sel[id];}).length;
+  var box=$('#allChkBox');
+  box.className='chk'+(n===ids.length&&n>0?' on':(n>0?' mixed':''));
+}
+
+/* ── 右栏编辑器 ────────────────────────────────────── */
+function sect(key,title,body){
+  var open=!!state.sections[key];
+  return '<div class="sect'+(open?' open':'')+'" data-sect="'+key+'">'+
+    '<div class="sect-h">'+title+'<svg class="arw" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></div>'+
+    '<div class="sect-b">'+body+'</div></div>';
+}
+function renderEditor(){
+  var ed=$('#editor');
+  var e=state.edit?entry(state.edit):null;
+  if(!e){
+    ed.innerHTML='<div class="ed-blank">'+
+      '<svg width="34" height="34" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"><path d="M2.5 3.2c2-.7 4-.5 5.5.6 1.5-1.1 3.5-1.3 5.5-.6v9.3c-2-.7-4-.5-5.5.6-1.5-1.1-3.5-1.3-5.5-.6zM8 3.8v9.3"/></svg>'+
+      '<b>点中间任意一条开始编辑</b><span>不用展开整屏表单，<br>高级设置都收在下面的折叠区里。</span></div>';
+    ed.classList.remove('on');
+    return;
+  }
+  var posOpts=['前文','后文','@深度','Outlet'].map(function(p){return '<option'+(e.pos===p?' selected':'')+'>'+p+'</option>';}).join('');
+  var grpOpts=GROUPS.map(function(g){return '<option'+(e.group===g?' selected':'')+'>'+g+'</option>';}).join('');
+  var h=''+
+  '<div class="ed-hd">'+
+    '<div class="kicker">编辑条目 · UID '+e.id+'</div>'+
+    '<h2>'+esc(e.title)+'</h2>'+
+    '<div class="meta">'+esc(e.group)+' · '+fmtTok(e.tokens)+' tokens · 顺序 '+e.order+'</div>'+
+    '<button class="ico close-ed" id="edClose" style="position:absolute;right:12px;top:14px"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>'+
+  '</div>'+
+  '<div class="ed-bd">'+
+    '<div class="sw-row">'+
+      '<div class="sw'+(e.mode!=='off'?' on':'')+'" data-sw="enable"><span class="tg"></span><span><b>启用</b><small>不参与注入</small></span></div>'+
+      '<div class="sw'+(e.mode==='always'?' on':'')+'" data-sw="always"><span class="tg"></span><span><b>常驻</b><small>每轮都带</small></span></div>'+
+    '</div>'+
+    '<div class="fld"><label>标题 / 备注</label><input class="inp" id="edTitle" value="'+esc(e.title)+'"></div>'+
+    '<div class="fld"><label>主关键词</label><div class="chips">'+e.keys.map(function(k){return '<span class="key">'+esc(k)+'</span>';}).join('')+'<span class="key add" data-addkey>＋ 加一个</span></div></div>'+
+    '<div class="fld"><label>内容（改动即时生效）</label><textarea class="inp" id="edContent">'+esc(e.content)+'</textarea></div>'+
+    sect('trigger','触发与过滤',
+      '<div class="grid2">'+
+        '<div class="fld"><label>逻辑</label><select class="inp"><option>AND ANY</option><option>AND ALL</option><option>NOT ALL</option></select></div>'+
+        '<div class="fld"><label>触发率 %</label><input class="inp" type="number" id="edTrig" value="'+e.trigger+'"></div>'+
+        '<div class="fld"><label>扫描深度</label><input class="inp" placeholder="跟随全局"></div>'+
+        '<div class="fld"><label>可选过滤</label><input class="inp" placeholder="留空则忽略"></div>'+
+      '</div>')+
+    sect('place','位置与顺序',
+      '<div class="grid2">'+
+        '<div class="fld"><label>位置</label><select class="inp" id="edPos">'+posOpts+'</select></div>'+
+        '<div class="fld"><label>顺序 Order</label><input class="inp" type="number" id="edOrder" value="'+e.order+'"></div>'+
+        '<div class="fld"><label>深度 Depth</label><input class="inp" type="number" value="4"></div>'+
+        '<div class="fld"><label>分组</label><select class="inp" id="edGroup">'+grpOpts+'</select></div>'+
+      '</div>')+
+    sect('adv','高级（递归 / 冷却 / 角色过滤）',
+      '<div class="grid2">'+
+        '<div class="fld"><label>包含组</label><input class="inp" placeholder="同组只激活一条"></div>'+
+        '<div class="fld"><label>组权重 / 黏性 / 冷却</label><input class="inp" placeholder="100 / — / —"></div>'+
+        '<div class="fld"><label>角色过滤</label><input class="inp" placeholder="不限"></div>'+
+        '<div class="fld"><label>递归层级</label><input class="inp" placeholder="1"></div>'+
+      '</div>'+
+      '<div style="font-size:11.5px;color:var(--ink3);line-height:1.7">这些是原来展开后铺满一屏的字段，这里收起来，要用再打开。</div>')+
+  '</div>'+
+  '<div class="ed-ft"><span class="saved"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8.4 3.2 3.2L13 4.8"/></svg>改动已自动保存</span>'+
+    '<button class="btn" data-act="dup">复制</button>'+
+    '<button class="btn" data-act="del" style="color:#a4654f">删除</button></div>';
+  ed.innerHTML=h;
+  // 桌面三栏常驻；窄屏只有用户主动点开条目才弹出抽屉
+  ed.classList.toggle('on', window.innerWidth > 1080 || !!state.edOpen);
+}
+
+/* ── 批量条 ────────────────────────────────────────── */
+function renderBulk(){
+  var ids=Object.keys(state.sel).filter(function(k){return state.sel[k];});
+  $('#bulkN').textContent='已选 '+ids.length+' 条';
+  $('#bulk').classList.toggle('on',ids.length>0);
+  $('#bulk').style.display = ids.length ? 'flex':'none';
+  // 避免 display:none 与 opacity 动画冲突
+  if(ids.length) $('#bulk').style.display='flex';
+}
+function renderAll(){ renderSide(); renderRows(); renderEditor(); renderBulk(); }
+
+/* ── 事件 ──────────────────────────────────────────── */
+$('#side').addEventListener('click',function(ev){
+  var i=ev.target.closest('.nav-i'); if(!i) return;
+  state.view=i.getAttribute('data-v');
+  renderSide(); renderRows();
+});
+$('#seg').addEventListener('click',function(ev){
+  var b=ev.target.closest('button'); if(!b) return;
+  state.st=b.getAttribute('data-st');
+  [].forEach.call($('#seg').children,function(x){x.classList.toggle('on',x===b);});
+  renderRows();
+});
+$('#sort').addEventListener('change',function(){ state.sort=this.value; renderRows(); });
+$('#q').addEventListener('input',function(){ state.q=this.value.trim(); renderRows(); });
+
+$('#rows').addEventListener('click',function(ev){
+  var row=ev.target.closest('.row'); if(!row) return;
+  var id=+row.getAttribute('data-id');
+  var chk=ev.target.closest('[data-act="sel"]');
+  if(chk){
+    state.sel[id]=!state.sel[id];
+    renderRows(); renderBulk();
+    return;
+  }
+  state.edit=id; state.edOpen=true; renderRows(); renderEditor();
+});
+$('#allChk').addEventListener('click',function(){
+  var list=visible();
+  var all=list.every(function(e){return state.sel[e.id];});
+  list.forEach(function(e){ state.sel[e.id]=!all; });
+  renderRows(); renderBulk();
+});
+
+$('#editor').addEventListener('click',function(ev){
+  if(ev.target.closest('#edClose')){ state.edit=null; state.edOpen=false; renderRows(); renderEditor(); return; }
+  var sh=ev.target.closest('.sect-h');
+  if(sh){ var k=sh.parentNode.getAttribute('data-sect'); state.sections[k]=!state.sections[k]; renderEditor(); return; }
+  var sw=ev.target.closest('[data-sw]');
+  if(sw){ var e=entry(state.edit); if(!e) return;
+    if(sw.getAttribute('data-sw')==='enable') e.mode = (e.mode==='off') ? 'key' : 'off';
+    else e.mode = (e.mode==='always') ? 'key' : 'always';
+    renderAll(); return;
+  }
+  if(ev.target.closest('[data-addkey]')){
+    var e2=entry(state.edit); if(!e2) return;
+    e2.keys.push('新关键词'+(e2.keys.length+1)); renderEditor(); return;
+  }
+  var act=ev.target.closest('[data-act]');
+  if(act){
+    var e3=entry(state.edit); if(!e3) return;
+    if(act.getAttribute('data-act')==='dup'){
+      var n=JSON.parse(JSON.stringify(e3)); n.id=Math.max.apply(null,ENTRIES.map(function(x){return x.id;}))+1;
+      n.title=e3.title+' 副本'; ENTRIES.push(n); state.edit=n.id; renderAll(); toast('已复制一份');
+    } else if(act.getAttribute('data-act')==='del'){
+      ENTRIES.splice(ENTRIES.indexOf(e3),1); delete state.sel[e3.id]; state.edit=null;
+      renderAll(); toast('已删除');
+    }
+    return;
+  }
+});
+$('#editor').addEventListener('input',function(ev){
+  var e=entry(state.edit); if(!e) return;
+  var t=ev.target;
+  if(t.id==='edTitle'){ e.title=t.value; renderRows(); var h=$('#editor .ed-hd h2'); if(h) h.textContent=t.value; }
+  else if(t.id==='edContent'){ e.content=t.value; }
+  else if(t.id==='edTrig'){ e.trigger=+t.value||0; renderRows(); }
+  else if(t.id==='edOrder'){ e.order=+t.value||0; renderRows(); }
+});
+$('#editor').addEventListener('change',function(ev){
+  var e=entry(state.edit); if(!e) return;
+  if(ev.target.id==='edPos'){ e.pos=ev.target.value; renderRows(); }
+  else if(ev.target.id==='edGroup'){ e.group=ev.target.value; renderSide(); }
+});
+
+/* 批量动作 */
+function hidePop(){ state.pop=null; $('#popGroup').classList.remove('on'); $('#popTag').classList.remove('on'); }
+function buildPops(){
+  $('#popGroup').innerHTML=GROUPS.map(function(g){return '<div class="pop-i" data-val="'+g+'">'+g+'</div>';}).join('');
+  $('#popTag').innerHTML=TAGS.map(function(t){return '<div class="pop-i" data-val="'+t+'">'+t+'</div>';}).join('');
+}
+$('#bulk').addEventListener('click',function(ev){
+  var pi=ev.target.closest('.pop-i');
+  if(pi){
+    var ids=Object.keys(state.sel).filter(function(k){return state.sel[k];}).map(Number);
+    var val=pi.getAttribute('data-val');
+    var isGroup=!!pi.closest('#popGroup');
+    ids.forEach(function(id){ var e=entry(id); if(!e) return;
+      if(isGroup) e.group=val; else if(e.tags.indexOf(val)<0) e.tags.push(val);
+    });
+    hidePop(); renderAll(); toast('已'+(isGroup?'移动到「'+val+'」':'加标签「'+val+'」')+'：'+ids.length+' 条');
+    return;
+  }
+  if(ev.target.closest('#bulkX')){ state.sel={}; renderRows(); renderBulk(); hidePop(); return; }
+  var b=ev.target.closest('[data-bulk]'); if(!b) return;
+  var act=b.getAttribute('data-bulk');
+  if(act==='group'||act==='tag'){
+    var which=act==='group'?'#popGroup':'#popTag';
+    var will=state.pop===act?'':act;
+    hidePop(); state.pop=will;
+    if(will) $(which).classList.add('on');
+    return;
+  }
+  var ids=Object.keys(state.sel).filter(function(k){return state.sel[k];}).map(Number);
+  if(!ids.length) return;
+  if(act==='delete'){
+    ids.forEach(function(id){ var e=entry(id); if(e) ENTRIES.splice(ENTRIES.indexOf(e),1); delete state.sel[id]; });
+    if(state.edit && !entry(state.edit)) state.edit=null;
+    toast('已删除 '+ids.length+' 条');
+  } else {
+    ids.forEach(function(id){ var e=entry(id); if(!e) return;
+      if(act==='enable' && e.mode==='off') e.mode='key';
+      if(act==='disable') e.mode='off';
+      if(act==='always') e.mode='always';
+    });
+    toast('已处理 '+ids.length+' 条');
+  }
+  state.sel={}; hidePop(); renderAll();
+});
+document.addEventListener('click',function(ev){ if(!ev.target.closest('.pop') && !ev.target.closest('[data-bulk="group"]') && !ev.target.closest('[data-bulk="tag"]')) hidePop(); });
+
+/* 顶栏 */
+$('#btnNew').addEventListener('click',function(){
+  var n={ id:Math.max.apply(null,ENTRIES.map(function(x){return x.id;}))+1, title:'新条目', keys:['关键词'],
+          group:'规则', tags:[], mode:'key', pos:'@深度', order:350, trigger:100, tokens:0, content:'' };
+  ENTRIES.push(n); state.view='all'; state.st='all'; state.q=''; $('#q').value='';
+  state.edit=n.id; state.edOpen=true; renderAll(); toast('已新建，右侧直接改');
+});
+$('#btnExport').addEventListener('click',function(){ toast('样式稿：导出按钮只是示意'); });
+$('#bookBtn').addEventListener('click',function(){ toast('样式稿：只放了一本「砚舟 · 江湖设定集」'); });
+$('#btnOld').addEventListener('click',function(){ $('#mask').classList.add('on'); $('#modal').classList.add('on'); });
+$('#mX').addEventListener('click',function(){ $('#mask').classList.remove('on'); $('#modal').classList.remove('on'); });
+$('#mask').addEventListener('click',function(){ $('#mask').classList.remove('on'); $('#modal').classList.remove('on'); });
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ $('#mask').classList.remove('on'); $('#modal').classList.remove('on'); hidePop(); } });
+
+buildPops();
+renderAll();
+})();
+</script>
+</body>
+</html>

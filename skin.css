@@ -1,0 +1,2186 @@
+/* ═════════════════════════════════════════════════════════════════════════
+   米白护眼 · 整套皮肤      skin.css
+   mf-tavern-skin 扩展的样式主文件（**唯一来源**）
+   ─────────────────────────────────────────────────────────────────────────
+   装了这个扩展，外观就是这个文件的样子，不需要再去改 data/_css/user.css。
+   给别人分享时，把整个 mf-tavern-skin 文件夹拷进
+        data/extensions/third-party/
+   重启酒馆即可，样式自动加载。
+
+   ★ 加载顺序怎么保证（这是整套皮肤能不能压住主题的关键）
+     SillyTavern 会把 manifest 里 "css" 指定的文件作为一个 <link> 插进 head，
+     位置在启动阶段 —— 而用户的主题配色是运行中由 power-user.js 的
+     applyCustomCSS() 往 head 末尾追加 <style>。
+     也就是说：主题永远排在我们后面，同优先级下主题会赢。
+     所以 index.js 里的 style-guard 模块会把这个 link 一直钉在 head 末尾，
+     主题一变就挪回去。这里只管写样式，不用管顺序。
+
+   ★ 本文件与 data/_css/user.css 的关系
+     内容同源（2026-11-04 从 user.css 迁移而来）。
+     过渡期两份都留着：万一扩展没被加载，user.css 还能兜住皮肤。
+     确认扩展生效后，user.css 可以还原成原始的 30 字节注释，只留这一份。
+     以后改样式：**只改这里**，改完同步一份到 user.css 或直接清空它。
+
+   ★ 分发给别人时的注意
+     · 别人如果有自己的主题（custom_css），本皮肤会盖掉它的配色和布局，
+       但背景图之类我们没写的属性仍会保留 —— 这是有意的，不算 bug。
+     · 本皮肤没有依赖任何第三方字体，手机上用的是系统字体栈。
+
+   ─────────────────────────────────────────────────────────────────────
+   以下为原 user.css 的完整内容与经验注释（保留，改样式前先读一遍）
+   ───────────────────────────────────────────────────────────────────── */
+
+/* ═════════════════════════════════════════════════════════════════════════
+   酒馆美化 · 米白护眼      user.css（落地版 v1）
+   落地时间：2026-11-04
+   设计稿（改外观先改它，再同步回来）：
+       D:\tavern-skin\tavern_skin_cream_v7.html
+   落地位置：
+       C:\Users\Administrator\AppData\Roaming\com.tauritavern.client\data\_css\user.css
+   ─────────────────────────────────────────────────────────────────────────
+   ★ 设计口径（用户拍板，别改回去）
+     · 米白偏白浅色系，绝对不要绿色
+     · 强调色 = 暖灰褐 taupe #8d8271，只用于名字 / 焦点 / 图标，不铺大面积
+     · 正文直排：无气泡框、无底色、无阴影、无头像
+     · 字号约 17px、行高 1.9、消息块 93% 居中（宽度口径照酒馆「报纸(无滤镜)」主题）
+     · 对话用淡米金高亮，只盖文字下半截，不盖「」引号
+     · 明令禁止：楷体 / 宋体换字体方案（用户明确否决过）
+
+   ★ 关键数据（都是实测出来的，别重新猜）
+     1. 真实酒馆 DOM 里【没有 #app】。根节点就是 body。
+        设计稿里的 #app 只是演示容器，搬过来一律换成 :root / body。
+     2. user.css 在 head 里是最后一个 link（index.html 第 46 行，
+        在 style.css 第 36 行之后）→ 同优先级能压过原生样式。
+     3. 酒馆的配色不在 CSS 里：主题是 JS 把 --SmartTheme* 内联写到 html 标签上。
+        内联样式 > :root{}，所以下面覆盖主题变量【必须 !important】，
+        否则在设置里一换主题，这套配色立刻失效。
+     4. #sheld 默认 --sheldWidth: 50vw —— 不改宽度聊天区永远只有半屏。
+        这里直接写死 width:100%，绕开 JS 注入的变量。
+     5. #chat 自带 text-shadow（设计给"文字压在背景图上"用的），
+        在浅米白底上会让字发脏、看久刺眼，必须关掉。
+     6. .mes 在系统开「高对比度」(prefers-contrast: more) 时会被加 2px 边框，
+        所以 border:none 必须 !important 兜住。
+     7. 浏览器给 q 标签自带前后引号（q::before / q::after），
+        而酒馆自己完全没写过 q 的样式 → 必须 content:none，
+        否则「引号」会变成「「引号」」双层。
+     8. color-mix() 在 Chrome 97 上不支持（Chrome 111 才加）。
+        设计稿里用了 color-mix 的地方，这里全部换成写死的 rgba 等价色。
+        以后加新样式也别再用 color-mix，旧内核上不报错、只是安静地没效果。
+     9. ★ 主题的 custom_css 不在磁盘文件里，是运行时由
+        power-user.js 的 applyCustomCSS() 把一段 style 标签
+        appendChild 到 head 末尾 —— 位置在 user.css 之后。
+        → 换成任何带自定义 CSS 的主题（Izumi 68K / 微信读书 54K 那种），
+          它的规则在层叠上压过本文件（同优先级时后加载者胜）。
+        → 所以本文件关键属性一律带 !important，并且第 4.0 节专门写了
+          「抗主题干扰」的兜底。若某天发现某块样式突然被主题改回去，
+          先怀疑这里，不要去改选择器层级。
+     10. --fontScale / --shadowWidth / --blurStrength 都是 JS 用
+         style.setProperty 内联写到 html 上的（power-user.js），
+         同样必须 !important 才压得住。
+     11. 输入框下面那排「小剧场 / 删去本轮 / 隐藏本轮」不是静态 HTML，
+         是「快速回复」扩展运行时生成的 #qr--bar，作为 #send_form 的
+         flex 子项（order:1）掉到下一行。它的折叠逻辑见第 6.1 节。
+
+   ★ 为什么对话高亮不需要正则、不需要 span（这次踩过的坑，记牢）
+     SillyTavern 的 messageFormatting()（public/script.js 约 1897~1921 行）
+     在渲染消息时已经自动把六种引号包成 q 标签：
+         " "   “ ”   « »   「 」   『 』    ＂ ＂
+     以 > 开头的引用会变成 blockquote。
+     所以直接写 .mes_text q 就能命中，零配置、零正则、不用改 AI 输出。
+     （本次一开始误判"必须加正则往 HTML 里塞 span"，用户拿别人的主题反驳，
+       翻源码后确认是我错。教训：先 grep 酒馆源码看它已经给了什么标签，
+       再下"CSS 做不到"的结论。）
+
+   ★ 回退方法（出问题 30 秒复原）
+     把本文件内容清空、只留一行空注释即可（等于恢复默认）。
+     或用备份直接覆盖：
+         D:\tavern-skin\backup_apply_20261104\user.css.原始
+
+   ★ 带【可选】标记的代码块可以整块删掉，不影响其它部分。
+   ★ 改完必须重启酒馆才生效（user.css 是启动时加载的，不热更新）。
+   ═════════════════════════════════════════════════════════════════════════ */
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   0. 调色板（本皮肤自己的变量，前缀 mf = 米白）
+      改颜色只改这里，下面全部引用变量，不要在别处散写色值。
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --mf-bg:          #f4f2ec;   /* 窗口最底：米白（不是纯白，纯白刺眼） */
+  --mf-paper:       #fbf9f4;   /* 面板 / 输入框底 */
+  --mf-ink:         #45413a;   /* 正文：暖深灰，不是纯黑；对 paper 约 10:1 */
+  --mf-ink2:        #79746a;   /* 次要文字 */
+  --mf-ink3:        #a9a49a;   /* 最弱：时间戳、计数 */
+  --mf-line:        #e7e2d7;   /* 分隔线 */
+  --mf-line2:       #d9d3c5;   /* 深一档线：边框 */
+  --mf-accent:      #8d8271;   /* 暖灰褐 taupe（唯一强调色） */
+  --mf-accent-deep: #6f6555;   /* 深强调：名字 / hover */
+  --mf-accent-bg:   #efebe1;   /* 强调浅底：hover 背景 */
+  --mf-mark:        #b3a488;   /* 米金：用户消息细线 + 对话高亮 */
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   1. 覆盖酒馆主题变量（必须 !important，见头部第 3 条）
+      这是"整站"的关键：抽屉、弹窗、菜单、设置页全都读这些变量，
+      改这里 = 一次性全部换色，不用逐个元素去怼。
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --SmartThemeBodyColor:            var(--mf-ink)         !important;  /* 全局正文色 */
+  --SmartThemeEmColor:              var(--mf-ink2)        !important;  /* 斜体 / 强调 */
+  --SmartThemeQuoteColor:           var(--mf-accent-deep) !important;  /* 引用色改成中性 */
+  --SmartThemeUnderlineColor:       var(--mf-mark)        !important;
+  --SmartThemeBlurTintColor:        var(--mf-bg)          !important;  /* body 与各面板底色 */
+  --SmartThemeChatTintColor:        var(--mf-bg)          !important;  /* 聊天区底色 */
+  --SmartThemeBorderColor:          var(--mf-line2)       !important;  /* 全部边框 */
+  --SmartThemeShadowColor:          transparent           !important;  /* 关掉文字投影 */
+  --SmartThemeUserMesBlurTintColor: transparent           !important;  /* 气泡模式下也不给消息上色 */
+  --SmartThemeBotMesBlurTintColor:  transparent           !important;
+  --SmartThemeFastUIBGColor:        var(--mf-paper)       !important;
+  --SmartThemeBlurStrength:         0px                   !important;  /* 关磨砂：省电、低端机不发烫 */
+  --shadowWidth:                    0                     !important;  /* 文字投影半径归零 */
+
+  /* 字号比例 1.13 → 正文约 16.95px，顶栏与按钮等比放大（报纸主题同款 1.13） */
+  --fontScale:      1.13 !important;
+  --mainFontFamily: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei UI",
+                    "Microsoft YaHei", "PingFang SC", sans-serif !important;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   2. 整站背景
+   ───────────────────────────────────────────────────────────────────────── */
+body {
+  background-color: var(--mf-bg) !important;
+  color: var(--mf-ink) !important;
+}
+
+/* 【可选】强制纯米白：保留 = 不看背景图；整块删掉 = 留着你自己的背景图 */
+#bg1   { display: none !important; }
+body   { background-image: none !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   3. 顶栏（那一排抽屉图标）
+   ───────────────────────────────────────────────────────────────────────── */
+#top-bar {
+  background-color: rgba(244, 242, 236, 0.92) !important;   /* = --mf-bg 92% */
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--mf-line) !important;
+}
+#top-bar .drawer-icon,
+#top-bar .drawer-toggle {
+  color: var(--mf-ink2) !important;
+  border-radius: 10px;
+  transition: background .15s ease, color .15s ease;
+}
+#top-bar .drawer-icon:hover,
+#top-bar .drawer.openDrawer .drawer-icon {
+  background-color: var(--mf-accent-bg) !important;
+  color: var(--mf-accent-deep) !important;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   4. 聊天区：全宽 + 直排（核心）
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* 4.0 抗主题干扰（见头部第 9 条）
+      主题 CSS 是运行时插到 head 末尾的，天然压在本文件之上。
+      这里把最容易被主题改回去的几个属性钉死：宽度上限、字体族。
+      注意：这里只钉「结构性」属性，颜色一律走第 1 节的变量覆盖，
+      因为主题一般不会用 !important 撒颜色，但很爱写 width / max-width / font-family。 */
+#sheld      { max-width: none !important; }
+#chat       { max-width: none !important; }
+#form_sheld { max-width: none !important; }
+.mes_text   { font-family: inherit !important; }   /* 用户明确禁止换字体 */
+
+/* 4.1 全宽：不改这里，聊天区永远只有半屏（默认 --sheldWidth: 50vw） */
+#sheld {
+  width: 100% !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+#chat {
+  background-color: transparent !important;   /* 让 body 的米白透上来，整页一张纸 */
+  text-shadow: none !important;               /* 关键：关掉酒馆默认的文字投影 */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-top: 8px !important;
+}
+
+/* 4.2 单条消息：93% 居中、无框无底、无头像 */
+.mes {
+  width: 93% !important;
+  max-width: 1040px !important;   /* 电脑大屏别让一行拉到 1800px，读不动 */
+  margin: 1px auto !important;
+  padding: 12px 8px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  display: flex;
+  align-items: flex-start;
+}
+/* 头像整个去掉（用户要求） */
+.mesAvatarWrapper { display: none !important; }
+
+/* 4.3 消息之间的呼吸线：极浅，只起断句作用 */
+.mes + .mes::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 8px; right: 8px;
+  height: 1px;
+  background: var(--mf-line);
+  opacity: 0.75;
+}
+
+/* 4.4 悬停反馈（很淡，不抢戏） */
+.mes:hover { background: rgba(239, 235, 225, 0.55) !important; }
+
+/* 4.5 名字行 */
+.mes .ch_name { margin-bottom: 6px !important; }
+.mes .name_text {
+  font-size: 13.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+  color: var(--mf-accent-deep) !important;
+}
+.mes.is_user .name_text { color: var(--mf-mark) !important; }
+.mes .timestamp { font-size: 11px !important; color: var(--mf-ink3) !important; }
+
+/* 4.6 正文：直排大字 */
+.mes_text {
+  /* ★ v1.6.0：乘一个 --mf-read-scale（由顶栏长按面板里的「Aa 正文字号」
+     写进 body，默认 1）。为什么不直接改 --fontScale —— 那是酒馆的全局
+     字号，改它会连顶栏高度、输入框、所有 UI 一起变大；用户要的只是
+     「正文读起来舒服」。所以单点乘在正文这一层，别的地方一个字不动。
+     !important 必须留着：原生 .mes_text 也是带 !important 的。 */
+  font-size: calc(var(--mainFontSize) * var(--mf-read-scale, 1)) !important;
+  line-height: 1.9 !important;
+  letter-spacing: 0.02em;
+  color: var(--mf-ink) !important;
+  padding-top: 0 !important;
+  padding-bottom: 2px !important;
+}
+.mes_text p { margin: 0.5em 0; }
+.mes_text p:first-child { margin-top: 0; }
+.mes_text p:last-child  { margin-bottom: 0; }
+.mes_text em { color: var(--mf-ink2) !important; }
+
+/* 4.7 用户自己的消息：唯一视觉标记 = 左侧 2px 米金竖线 */
+.mes.is_user .mes_text {
+  border-left: 2px solid var(--mf-mark) !important;
+  padding-left: 14px !important;
+}
+
+/* 4.8 思维链（若开启）：压低存在感，别跟正文抢 */
+.mes_reasoning {
+  border-left-color: var(--mf-line2) !important;
+  color: var(--mf-ink2) !important;
+  font-size: calc(var(--mainFontSize) * 0.9) !important;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   5. 对话高亮（核心功能，靠酒馆自带的 q 标签，零正则零配置）
+      q 包的是含引号整段，引号字形下半截本来几乎是空的，
+      所以光条技术上覆盖到括号、视觉上看不出来（别人的主题也一样）。
+   ───────────────────────────────────────────────────────────────────────── */
+.mes_text q::before,
+.mes_text q::after { content: none !important; }   /* 干掉浏览器自带的引号 */
+
+.mes_text q,
+.mes_text blockquote {
+  display: inline !important;
+  color: inherit !important;                        /* 字色不变，只加底 */
+  border: none !important;                          /* blockquote 原生左边框去掉 */
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 55%,
+    rgba(179, 164, 136, 0.32) 55%,                  /* = --mf-mark 32% */
+    rgba(179, 164, 136, 0.34) 84%,
+    transparent 84%
+  ) !important;
+  background-repeat: no-repeat !important;
+  padding: 0 2px !important;
+  margin: 0 !important;
+  /* 让高亮在换行处正确断开，而不是糊成一整块 */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.mes_text blockquote { padding-left: 10px !important; }
+.mes_text blockquote p { display: inline !important; margin: 0 !important; }
+
+/* 备选做法（想换味道时，把上面的 background-image 换掉）：
+   · 着重号：text-emphasis: filled dot; text-emphasis-position: under right;
+             注意：位置在旧内核上可能跑到字上方
+   · 渐隐线：linear-gradient(to right, rgba(179,164,136,.45), rgba(179,164,136,.08))
+             no-repeat left calc(100% - 2px) / 100% 1.5px; */
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   6. 输入栏
+   ───────────────────────────────────────────────────────────────────────── */
+#form_sheld { padding: 6px 3% 12px !important; }
+
+#send_form {
+  position: relative;                                  /* 方案 B 悬浮快捷栏的定位基准，删了外壳就飘走 */
+  background-color: var(--mf-paper) !important;
+  border: 1px solid var(--mf-line2) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 2px 10px rgba(96, 90, 76, 0.06) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 6px 8px !important;
+}
+
+#send_textarea {
+  background: transparent !important;
+  color: var(--mf-ink) !important;
+  font-family: inherit !important;
+  font-size: calc(var(--mainFontSize) * 0.95) !important;
+  line-height: 1.6 !important;
+  padding: 8px 4px !important;
+}
+#send_textarea::placeholder { color: var(--mf-ink3) !important; }
+
+/* 输入栏图标：send_but / options_button 在酒馆里是 font-awesome 图标（不是实心按钮），
+   所以只改颜色和 hover 底，不要给它们加填充背景，否则会变成一块方块 */
+#send_but,
+#options_button,
+#mes_continue {
+  color: var(--mf-accent) !important;
+  border-radius: 9px !important;
+  transition: background .15s ease, color .15s ease;
+}
+#send_but:hover,
+#options_button:hover,
+#mes_continue:hover {
+  background-color: var(--mf-accent-bg) !important;
+  color: var(--mf-accent-deep) !important;
+}
+#token_counter { color: var(--mf-ink3) !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   6.1 快捷操作栏（小剧场 / 删去本轮 / 隐藏本轮…）· 小把手 + 悬浮面板
+       用户 2026-11-04 定稿交互。设计稿 D:\tavern-skin\input_bar_demo.html
+       ─────────────────────────────────────────────────────────────────
+   ★ 这排按钮是什么（先搞清楚对象，别乱找）
+     它不在 index.html 里，是「快速回复」扩展运行时生成的：
+         #qr--bar > .qr--buttons > .qr--button
+     #qr--bar 是 #send_form 的 flex 子项（order:1, width:100%），
+     所以它掉到输入行下面一行 —— 就是"输入框里多出来的那排"。
+
+   ★ 交互（用户拍板）：默认全收起；只有点右上角小圆钮才展开浮层；
+     点输入框打字【不展开】；点输入框以外任何地方自动收起。
+
+   ★ 为什么这里必须有 JS（硬限制，别再尝试纯 CSS）
+     CSS 没有"记住已展开"的状态，可选的状态载体全是瞬时的：
+       · :hover          手机不可靠，摸一下会粘住
+       · :focus          要求元素本身可聚焦，酒馆输入区里全是 div
+       · :focus-within   点 textarea 就会触发 —— 正好是用户不要的行为
+     → 所以由扩展 mf-tavern-skin（data/extensions/third-party/）往 #send_form
+       里插一个 #mf-qr-handle，点击 toggle .mf-qr-open，
+       并给 body 打上 .mf-qr-js 标记。CSS 只负责长相。
+     → 兜底：脚本没加载时 body 没有 .mf-qr-js，
+       自动退回"点输入框展开"，按钮不会变成点不动。
+
+   ★ 酒馆内置「报纸(无滤镜)」主题的做法（只借思路，没抄样式）
+         #qr--bar{ height:.1px }   #send_form:hover #qr--bar{ height:Auto }
+     毛病：height 定高跳 Auto 没过渡、0.1px 仍占一条缝、手机 hover 会粘住。
+     我们改用 opacity+pointer-events（有过渡、收起后真的不占位）。
+
+   ★ 想换回"点输入框就展开"：删掉 body.mf-qr-js 那两条规则即可。
+   ───────────────────────────────────────────────────────────────────────── */
+
+#qr--bar {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: calc(100% + 8px) !important;   /* 贴在输入框正上方，留 8px 缝 */
+  width: auto !important;
+  max-width: 100% !important;
+  max-height: 42vh;                       /* 按钮多到放不下时面板内部滚动，不顶出屏幕 */
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 10px !important;
+  margin: 0 !important;
+  background-color: var(--mf-paper) !important;
+  border: 1px solid var(--mf-line2) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 6px 22px rgba(96, 90, 76, 0.14) !important;
+  /* 收起状态：透明 + 不可点，但不 display:none，否则过渡动画没了 */
+  opacity: 0 !important;
+  transform: translateY(6px);
+  pointer-events: none !important;
+  transition: opacity .2s ease, transform .2s ease !important;
+  z-index: 31;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ★ 展开/收起：三条规则的先后顺序不能乱（同为 !important 时靠后的一条赢）
+     2. 兜底：没有脚本 → 点输入框展开（保证按钮还能用）
+     3. 有脚本 → 取消 focus 触发（点了输入框也不该弹出来）
+     4. 有脚本 + 点了把手 → 展开（最高优先级，必须放最后） */
+
+/* 2. 兜底（脚本未加载时的行为） */
+body:not(.mf-qr-js) #send_form:focus-within #qr--bar {
+  opacity: 1 !important;
+  transform: none;
+  pointer-events: auto !important;
+}
+
+/* 3. 脚本生效后，废掉"点输入框就弹" */
+body.mf-qr-js #send_form:focus-within #qr--bar {
+  opacity: 0 !important;
+  transform: translateY(6px);
+  pointer-events: none !important;
+}
+
+/* 4. 只有点了小把手才展开 */
+body.mf-qr-js #send_form.mf-qr-open #qr--bar {
+  opacity: 1 !important;
+  transform: none;
+  pointer-events: auto !important;
+}
+
+/* ── 小把手（由扩展 mf-tavern-skin 注入 #mf-qr-handle 这个元素）──
+   没有脚本时 display:none，不会出现一个点不动的假把手 */
+#mf-qr-handle {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: -13px;               /* 骑在输入框上边框上，露出一半 */
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  align-items: center; justify-content: center;
+  background-color: var(--mf-paper);
+  border: 1px solid var(--mf-line2);
+  color: var(--mf-accent);
+  box-shadow: 0 2px 8px rgba(96, 90, 76, 0.12);
+  cursor: pointer;
+  z-index: 32;
+  transition: color .15s ease, transform .15s ease, opacity .15s ease;
+}
+body.mf-qr-js #mf-qr-handle { display: flex; }
+#mf-qr-handle:hover { color: var(--mf-accent-deep); transform: translateY(-1px); }
+#mf-qr-handle svg { width: 14px; height: 14px; }
+/* 展开时把手淡出：此时点空白处就能收起，不需要二次点把手 */
+#send_form.mf-qr-open #mf-qr-handle { opacity: 0; pointer-events: none; }
+
+/* 快捷回复按钮本体：换成米白配色（酒馆原生 hover 是 #4d4d4d 深灰，必须压掉） */
+#qr--bar .qr--button {
+  border: 1px solid var(--mf-line2) !important;
+  border-radius: 10px !important;
+  padding: 4px 10px !important;
+  margin: 0 !important;
+  font-size: 12.5px !important;
+  color: var(--mf-ink2) !important;
+  background-color: transparent !important;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+#qr--bar .qr--button:hover {
+  background-color: var(--mf-accent-bg) !important;
+  color: var(--mf-accent-deep) !important;
+  border-color: var(--mf-accent) !important;
+}
+/* 酒馆原生的"弹出面板"按钮固定在面板右上角，会和第一个按钮打架；
+   我们的面板本身可滚动，用不上它 → 藏掉 */
+#qr--bar > #qr--popoutTrigger { display: none !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   7. 消息操作按钮（hover 才浮现）
+   ───────────────────────────────────────────────────────────────────────── */
+.mes_button { color: var(--mf-ink3) !important; border-radius: 8px !important; }
+.mes_button:hover {
+  background-color: var(--mf-accent-bg) !important;
+  color: var(--mf-accent-deep) !important;
+}
+.swipe_left, .swipe_right { color: var(--mf-ink3) !important; }
+.swipe_left:hover, .swipe_right:hover { color: var(--mf-accent-deep) !important; }
+.swipes-counter { color: var(--mf-ink3) !important; font-size: 10.5px !important; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   8. 滚动条（护眼：细、低调）
+   ───────────────────────────────────────────────────────────────────────── */
+#chat::-webkit-scrollbar,
+.drawer-content::-webkit-scrollbar { width: 8px; }
+#chat::-webkit-scrollbar-thumb,
+.drawer-content::-webkit-scrollbar-thumb {
+  background-color: var(--mf-line2);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+#chat::-webkit-scrollbar-track,
+.drawer-content::-webkit-scrollbar-track { background: transparent; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   9. 手机（<=520px）：边距收紧、消息吃满宽度
+   ───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 520px) {
+  .mes {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 10px 2px !important;
+  }
+  .mes + .mes::before { left: 2px; right: 2px; }
+  .mes_text {
+    font-size: calc(var(--mainFontSize) * 0.95) !important;   /* 约 16px */
+    line-height: 1.85 !important;
+  }
+  #form_sheld { padding-left: 6px !important; padding-right: 6px !important; }
+  #send_form  { border-radius: 12px !important; }
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   10. 预设面板（AI 响应配置 · #ai_response_configuration）
+   ─────────────────────────────────────────────────────────────────────────
+   结构（酒馆原生，别改）：
+     #ai_response_configuration
+       └ #respective-presets-block       预设选择条（原生，只压扁）
+          └ #openai_settings
+               ├ .mf-tok-board           ← 本扩展加：token 总览
+               ├ .mf-fold                ← 本扩展加：把一堆参数收起来
+               │    └ #openai_settings 里原来的参数块
+               ├ .mf-pm-panel            ← 本扩展加：列表头 + 搜索
+               ├ .range-block > #completion_prompt_manager
+               │    └ ul#completion_prompt_manager_list   ← 条目行（原生生成）
+               └ .mf-list-foot           ← 本扩展加：整体替换 / 撤销
+
+   ★ 为什么参数折叠要搬 DOM：#openai_settings 里除了参数还有几十个
+     .range-block / .inline-drawer，光靠 CSS 藏不掉（高度不定）。
+     只要把「除了预设条目那块以外」的兄弟节点收起来就行（v1.2.0 起用 display:none）——
+     appendChild 是移动节点，不克隆，原事件监听全都还在。
+
+   ★ 为什么 #completion_prompt_manager 不能搬出去：
+     它在 #openai_settings 里面（st_index.html 2274 行），跟着 API 面板
+     一起显示/隐藏。搬出去的话，切到别的 API 它还挂在屏幕上。
+
+   ★ #completion_prompt_manager 的 innerHTML 会被 PromptManager.render()
+     整块清空重画 → 我们加的按钮一律放在它外面（toolbar / list-foot）。
+
+   ★ 条目行是 JS 运行时生成的，这里只负责把它排好看：
+     用 flex 的 order 把「把手 / 名字 / token / 开关」排成一行，
+     预览行和编辑器靠 flex-basis:100% 掉到第二行。
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --mf-paper2:  #f7f4ed;                  /* 比 paper 略深的底：条 / 卡 */
+  --mf-ok:      #7d8a6f;                  /* 仅用于「AI」角色小标，不是主题绿 */
+  --mf-hl:      rgba(179, 164, 136, .34); /* 搜索命中 */
+  --mf-hl-cur:  rgba(179, 164, 136, .62); /* 当前命中 */
+  --mf-danger:  #a05a50;
+}
+
+/* ── 10.1 预设选择条：原生那排按钮压小，别一进来就是三个大图标 ────────── */
+/* ★ .standoutHeader 原生带 linear-gradient(348deg, white30a→black70a) 灰条
+   （style.css 5406 行），在米白皮上像一块脏抹布，必须清掉背景和描边。 */
+#openai_api-presets .standoutHeader {
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 2px 2px 8px !important;
+  margin-bottom: 2px !important;
+  min-height: 0 !important;
+}
+/* 折叠之后这句提示没意义了 */
+#clickSlidersTips { display: none !important; }
+#openai_api-presets .standoutHeader strong {
+  font-size: 12px; font-weight: 600; letter-spacing: .06em;
+  color: #8b8478; text-transform: uppercase;
+}
+#openai_api-presets .menu_button_icon,
+#openai_api-presets .menu_button {
+  height: 26px; min-width: 26px; padding: 0 4px;
+  border-radius: 7px; border-color: transparent !important;
+  background: transparent !important; color: var(--mf-ink2);
+}
+#openai_api-presets .menu_button_icon:hover,
+#openai_api-presets .menu_button:hover { background: var(--mf-accent-bg) !important; color: var(--mf-accent-deep); }
+#settings_preset_openai {
+  height: 36px !important; border-radius: 10px !important;
+  background: var(--mf-paper2) !important; border-color: var(--mf-line2) !important;
+  font-size: 13.5px !important; color: var(--mf-ink) !important;
+}
+
+/* ── 10.2 token 总览（只算已开启条目，口径见 index.js 文件头）──────────── */
+.mf-tok-board {
+  width: 100% !important;
+  box-sizing: border-box;
+  padding: 10px 12px 9px;
+  margin: 2px 0 12px;
+  background: var(--mf-paper2);
+  border: 1px solid var(--mf-line);
+  border-radius: 11px;
+}
+.mf-tok-top { display: flex; align-items: baseline; gap: 6px; }
+.mf-tok-lb { font-size: 12px; color: var(--mf-ink2); }
+.mf-tok-lb b { color: var(--mf-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mf-tok-num { margin-left: auto; font-size: 12px; color: var(--mf-ink3); }
+.mf-tok-num b { font-size: 15px; color: var(--mf-accent-deep); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mf-tok-bar { height: 3px; border-radius: 2px; background: var(--mf-line2); margin: 8px 0 6px; overflow: hidden; }
+.mf-tok-bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--mf-accent); transition: width .3s; }
+.mf-tok-sub { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--mf-ink3); }
+.mf-tok-sub b { color: var(--mf-ink2); font-weight: 500; font-variant-numeric: tabular-nums; }
+/* 总览按设计稿摆在折叠条**上面**（demo ② 在 ③ 之前），所以它被搬到了
+   #openai_settings 外面。切到 Text Completion 等别的 API 时 #openai_settings
+   整个隐藏，总览却还在 → 用「列表里有没有条目行」兜住。 */
+#ai_response_configuration:not(:has(#completion_prompt_manager_list > li)) .mf-tok-board {
+  display: none !important;
+}
+
+/* ── 10.3 参数折叠 ─────────────────────────────────────────────────────── */
+/* ★★ v1.2.0 只切 class，不搬节点。
+   上一版把 #common-gen-settings-block / #respective-ranges-and-temps /
+   #openai_settings 里的参数块全部 appendChild 进自造容器里 —— 那等于把原生
+   flex 布局的父子关系整个打散，每次列表重画还要重算一遍，是"布局全乱"的主因之一。
+   现在参数块原地不动，只是被 display:none 收起来。 */
+.mf-fold {
+  width: 100% !important;
+  box-sizing: border-box;
+  display: flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 11px; margin: 0 0 10px;
+  border: 1px solid var(--mf-line2); border-radius: 10px;
+  background: var(--mf-paper2);
+  cursor: pointer; text-align: left; color: inherit; font-family: inherit;
+  transition: border-color .18s, background .18s;
+}
+.mf-fold:hover { background: var(--mf-accent-bg); }
+.mf-fold.open { border-color: var(--mf-accent); }
+.mf-fold-title { font-size: 13px; font-weight: 600; flex: none; }
+.mf-fold-sum {
+  flex: 1; min-width: 0; font-size: 11px; color: #7d7568;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.mf-fold.open .mf-fold-sum { display: none; }
+.mf-fold-chev { flex: none; display: flex; color: #8b8478; transition: transform .22s; }
+.mf-fold-chev svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }
+.mf-fold.open .mf-fold-chev { transform: rotate(180deg); }
+
+/* 250px 面板塞不下「温度 0.85 · 上下文 200K · 回复 512」（要 200px，只剩 124px），
+   之前就被截成"上下文 200…"——数字断在半截，比不显示还难看。
+   窄了就换成两行：标题 + 箭头一行，摘要单独占第二行靠左。 */
+.mf-fold.mf-2l { height: auto !important; padding: 8px 11px 9px; flex-wrap: wrap; row-gap: 0; }
+.mf-fold.mf-2l .mf-fold-title { flex: 1; min-width: 0; }
+.mf-fold.mf-2l .mf-fold-sum {
+  order: 3; flex: 0 0 100%;
+  margin-top: 2px; text-align: left;
+  overflow: visible; white-space: normal;
+}
+
+/* 收起的就是这三类：两块兄弟 + #openai_settings 里除条目块以外的全部。
+   :has() 在 Chromium 111+ 可用，酒馆自家 CSS 也在用（promptmanager.css:282）。 */
+#ai_response_configuration.mf-collapsed #common-gen-settings-block,
+#ai_response_configuration.mf-collapsed #respective-ranges-and-temps,
+#ai_response_configuration.mf-collapsed #openai_settings > .range-block:not(:has(#completion_prompt_manager)),
+#ai_response_configuration.mf-collapsed #openai_settings > div:not(.range-block):not(:has(#completion_prompt_manager)):not(.mf-pm-panel):not(.mf-tok-board):not(.mf-list-foot) {
+  display: none !important;
+}
+/* ★★ v1.2.1 血的教训：上面这条 `div:not(.range-block)` 把本扩展自己的三块也一起收掉了
+   （.mf-pm-panel 工具条 / .mf-tok-board 总览 / .mf-list-foot 底部），
+   真机表现就是「折叠状态下搜索、新建那三个按钮集体消失」。
+   它们也是 div，也是 #openai_settings 的直接子节点 —— 必须显式排除，
+   否则以后往 #openai_settings 里加任何 div 都会被吞。 */
+
+/* ── 10.4 列表头 + 搜索 ────────────────────────────────────────────────── */
+.mf-pm-panel { margin: 0; width: 100% !important; box-sizing: border-box; }
+.mf-list-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+.mf-list-head .mf-t { font-size: 12.5px; color: var(--mf-ink2); letter-spacing: .02em; }
+.mf-list-head .mf-t b { color: var(--mf-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mf-list-actions { margin-left: auto; display: flex; gap: 2px; }
+.mf-mini-btn {
+  height: 26px; min-width: 28px; padding: 0 6px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; background: transparent; border-radius: 7px;
+  color: var(--mf-ink2); cursor: pointer; font-family: inherit;
+  transition: background .15s, color .15s;
+}
+.mf-mini-btn:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-mini-btn.on { background: var(--mf-accent-bg); color: var(--mf-accent-deep); border-color: var(--mf-line2); }
+.mf-mini-btn svg { width: 13px; height: 13px; }
+
+.mf-find-wrap { max-height: 0; overflow: hidden; transition: max-height .22s ease; }
+.mf-find-wrap.on { max-height: 120px; }
+.mf-find-box {
+  display: flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 10px; margin-bottom: 8px;
+  background: var(--mf-paper2); border: 1px solid var(--mf-line2); border-radius: 9px;
+}
+.mf-find-box > svg { width: 14px; height: 14px; flex: none; color: var(--mf-ink3); }
+.mf-find-box input {
+  flex: 1; min-width: 0; height: 100%;
+  border: none !important; background: transparent !important; outline: none;
+  box-shadow: none !important; padding: 0 !important;
+  font-family: inherit; font-size: 13px; color: var(--mf-ink);
+}
+.mf-find-box input::placeholder { color: var(--mf-ink3); font-size: 12px; }
+.mf-find-x {
+  width: 20px; height: 20px; flex: none; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; border-radius: 5px;
+  color: var(--mf-ink3); cursor: pointer;
+}
+.mf-find-x:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-find-x svg { width: 12px; height: 12px; }
+
+.mf-find-stat {
+  display: none; align-items: center; gap: 8px;
+  padding: 0 4px 8px; font-size: 11.5px; color: var(--mf-ink2);
+}
+.mf-find-stat.on { display: flex; }
+.mf-find-stat b { color: var(--mf-accent-deep); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mf-grow { flex: 1; }
+
+.mf-chip {
+  height: 24px; padding: 0 9px;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--mf-line2); border-radius: 6px; background: var(--mf-paper2);
+  font-size: 11px; color: var(--mf-ink2); cursor: pointer; font-family: inherit;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.mf-chip:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); border-color: var(--mf-accent); }
+.mf-chip[disabled] { opacity: .45; cursor: default; }
+.mf-chip.go { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-chip.undo { color: var(--mf-ink3); }
+.mf-chip.undo:hover { color: var(--mf-accent-deep); }
+
+/* ── 10.5 条目行 ───────────────────────────────────────────────────────── */
+/* ★★★ v1.2.0 结构原则（别改回去，这一段是两次返工的总结）
+
+   一条 li = 原生那几个 span，一个都不加、不搬、不包。布局全部靠 grid 四列：
+        [把手] [名字] [token] [铅笔 开关]
+        [   预览行 —— li::after 读 data-mf-prev   ]
+   预览行不是节点，是 ::after 的生成内容，所以它不可能和任何东西抢位置。
+   JS 现在只做一件事：li.setAttribute('data-mf-prev', 摘要)。
+
+   ★ 为什么 v1.1.x 会"把手压字、数字压按钮"：
+     1) .drag-handle 原生是 position:absolute，靠 li 的 padding-left 让位。
+        真机左栏只有约 250px，四列硬排挤爆，绝对定位的把手就叠到名字上了。
+        → 现在把手是 grid 第 1 列，物理上不可能重叠。
+     2) 上一版用 JS 建 .mf-pm-main 包住名字 + 插 .mf-pm-preview + 插自绘铅笔，
+        60 多条 × 每次列表重画重排两遍，既卡又和原生 grid 抢位置。
+        → 现在结构零改动，只剩属性。
+
+   ★ 宽度按 250px 面板设计（真机左栏实测）：13 + 名字 + 34 + 58 + 4×5gap + 4padding。
+     名字在 250px 下剩约 100px，够 7 个汉字 + 省略号；宽面板自动变宽。 */
+
+/* 这个 ul 带 class="text_pole"：原生会给它铺底色 + 描边 + 内边距，
+   变成一个"大输入框"。这里全部清掉，列表要的是无边直排。 */
+/* ★ 真实祖先链：.range-block 是 display:flex（酒馆原生），
+   而 #completion_prompt_manager 是它的 flex 子项、min-width 默认 auto
+   → 会被内容撑到 1007px，整块横向溢出（实测：容器 869 / 列表 1007）。
+   所以这几条 min-width:0 不是装饰，是必须的。 */
+#completion_prompt_manager { width: 100% !important; min-width: 0 !important; }
+#completion_prompt_manager .range-block,
+#completion_prompt_manager > .range-block { min-width: 0 !important; width: 100% !important; }
+
+#completion_prompt_manager_list {
+  list-style: none;
+  display: block;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+/* 原生那两行表头（Name / Tokens）由我们的列表头代替 */
+#completion_prompt_manager_list > li.completion_prompt_manager_list_head,
+#completion_prompt_manager_list > li.completion_prompt_manager_list_separator { display: none !important; }
+#completion_prompt_manager .completion_prompt_manager_header { display: none !important; }
+#completion_prompt_manager .range-block { margin: 0 !important; padding: 0 !important; }
+
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+  display: grid !important;
+  /* 列宽必须 !important：原生 #..#.. 是 2 个 id 的选择器（4fr 80px 45px） */
+  grid-template-columns: auto minmax(0, 1fr) auto auto !important;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 5px;
+  row-gap: 0;
+  position: relative;
+  width: 100% !important;
+  box-sizing: border-box;
+  margin: 0 !important;
+  padding: 6px 2px 7px !important;   /* 左内边距不再给把手让位，把手是列 */
+  border: none !important;
+  /* 行分隔线单独用 #ded7c8：--mf-line #e7e2d7 在米白底上几乎看不见 */
+  border-bottom: 1px solid #ded7c8 !important;
+  border-radius: 0 !important;
+  background: transparent;
+  cursor: pointer;
+  list-style: none;
+  transition: background .14s, opacity .14s;
+}
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt:hover {
+  background: var(--mf-accent-bg);
+}
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt.mf-expanded {
+  background: var(--mf-paper) !important;
+  border-bottom-color: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--mf-line2);
+}
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt:last-child {
+  border-bottom-color: transparent !important;
+}
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt_draggable:active { cursor: grabbing; }
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt_disabled { opacity: .72; }
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt_disabled .completion_prompt_manager_prompt_name { color: #5f594e !important; }
+
+/* ① 把手 —— grid 第 1 列，跨两行垂直居中。
+   原生模板是 `<span class="drag-handle">☰</span>`，U+2630 在真机字体栈里没有字形，
+   fallback 出来是两块豆腐（用户说的"两个球形"之一）。这里 font-size:0 关掉字符，
+   换成内联 SVG 六点，不依赖任何字体。
+   display 必须 !important：原生 `.drag-handle:not(.ui-sortable-handle){display:none}`
+   是 2 个 id 的选择器，sortable 没初始化时会把把手整个吃掉。 */
+#completion_prompt_manager_list > li > .drag-handle {
+  position: static !important;          /* ★ 从 absolute 改成 grid 项 */
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
+  top: auto !important;
+  width: 13px !important;
+  height: auto !important;
+  min-height: 15px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  color: transparent !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  background: transparent !important;
+  border-radius: 3px;
+  cursor: grab;
+  touch-action: none;
+}
+#completion_prompt_manager_list > li > .drag-handle::before {
+  content: "" !important;
+  display: block;
+  width: 8px; height: 14px;
+  flex: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='14' viewBox='0 0 8 14'><g fill='%23776d5d'><circle cx='2' cy='2.5' r='1.2'/><circle cx='6' cy='2.5' r='1.2'/><circle cx='2' cy='7' r='1.2'/><circle cx='6' cy='7' r='1.2'/><circle cx='2' cy='11.5' r='1.2'/><circle cx='6' cy='11.5' r='1.2'/></g></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 8px 14px;
+  opacity: .75;
+  transition: opacity .15s;
+}
+#completion_prompt_manager_list > li:hover > .drag-handle::before { opacity: 1; }
+
+/* ② 名字 —— 第 2 列第 1 行 */
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex !important;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  /* 颜色必须 !important：原生 2 个 id 的选择器。
+     ★ 字重只到 500：真机若 fallback 到 Microsoft YaHei（只有 400/700），
+       写 600 会触发合成加粗，笔画发糊。 */
+  font-size: 13.5px !important;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: .01em;
+  color: #3a342b !important;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > a,
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > span[title] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit !important;
+  text-decoration: none !important;
+}
+/* 名字前的 FA 小图标（预设 / 全局 / 重要 / 钉住）：压小、压淡，别抢宽度 */
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > .fa-fw {
+  flex: none;
+  width: 10px;
+  font-size: 9.5px;
+  opacity: .62;
+  color: #8a8172;
+  margin-right: 1px;
+}
+/* 角色图标（user / robot）不显示：设计稿里没有，纯占宽度 */
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > [data-role] { display: none !important; }
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > .prompt-manager-injection-depth { font-size: 9px; opacity: .6; }
+#completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name > .prompt-manager-overridden { display: none !important; }
+
+/* ③ token 数 —— 第 3 列。固定 34px，否则每行数字位数不同会让列宽乱跳 */
+#completion_prompt_manager_list > li > .prompt_manager_prompt_tokens {
+  grid-column: 3;
+  grid-row: 1;
+  width: 34px !important;
+  min-width: 34px !important;
+  max-width: 34px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  /* ★ 字号/颜色也要 !important：原生是 2 个 id 的选择器，实测把 11px 顶回 13.5px */
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+  text-align: right;
+  color: #7e786b !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ④ 控件组 —— 第 4 列。原生那层是个裸 span（`<span><span class="controls">…`），
+   用 :has 直接选中它，不给它加类（加类也是 DOM 改动）。
+   min-width 固定：marker 行只有锁、普通行是铅笔+开关，不固定的话各行右边缘不齐。 */
+#completion_prompt_manager_list > li > span:has(> .prompt_manager_prompt_controls),
+#completion_prompt_manager_list > li > .prompt_manager_prompt_controls {
+  grid-column: 4;
+  grid-row: 1;
+  min-width: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+#completion_prompt_manager_list .prompt_manager_prompt_controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* ⑤ 预览行 —— 第 2 行整段。内容来自 attr(data-mf-prev)，
+   所以这行文字是 CSS 生成的，不参与任何布局竞争。
+   颜色 #7d7568：v1.1.2 实测 --mf-ink3 #a9a49a 在米白底上只有 2:1，等于看不见。 */
+#completion_prompt_manager_list > li.completion_prompt_manager_prompt::after {
+  content: attr(data-mf-prev);
+  grid-column: 2 / -1;
+  grid-row: 2;
+  display: block;
+  min-width: 0;
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  color: #7d7568;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 没有摘要就不生成这个框，否则会多出一条空白行 */
+#completion_prompt_manager_list > li[data-mf-prev=""]::after,
+#completion_prompt_manager_list > li:not([data-mf-prev])::after { content: none; }
+#completion_prompt_manager_list > li.mf-expanded::after { display: none; }
+
+/* ⑥ 铅笔 —— 用原生那颗（.prompt-manager-edit-action），不再自建按钮。
+   ★ 酒馆模板写的是 FA5 类名（fa-pencil），实际跑 FA6，真机把这颗渲染成灰方块。
+     这里 font-size:0 关掉字形，换成内联 SVG，不依赖字体。
+     ::before 也要 content:none，否则字形撑出一个看不见的宽度。 */
+#completion_prompt_manager_list .prompt-manager-edit-action {
+  display: inline-flex !important;
+  width: 22px !important;
+  height: 22px !important;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  color: transparent !important;
+  /* ★ 原生 opacity 规则会把它压到 .4（实测），必须 !important */
+  opacity: .78 !important;
+  /* ★ 原生 st_promptmanager.css:84 给 li 里所有 span span 加了
+     filter: drop-shadow(0 0 2px black) —— 在米白底上就是一圈黑晕，
+     铅笔看着又脏又糊。这条必须清掉。 */
+  filter: none !important;
+  border-radius: 6px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235f5748' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 20h9'/><path d='M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  transition: opacity .14s, background-color .14s;
+}
+#completion_prompt_manager_list .prompt-manager-edit-action::before { content: none !important; }
+#completion_prompt_manager_list > li:hover .prompt-manager-edit-action { opacity: 1 !important; }
+#completion_prompt_manager_list .prompt-manager-edit-action:hover { background-color: rgba(141, 130, 113, .16); }
+/* 拆链（删除）不要：用户明确说酒馆自带那个图标不需要，删除在行内编辑器的「删除」里 */
+#completion_prompt_manager_list .prompt-manager-detach-action { display: none !important; }
+
+/* ⑦ 开关 —— FA 的 toggle-on/off 字形换成一个圆角矩形槽 + 方块滑块。
+   ★★ 用户说的"拉杆变成两个球形"就是这个：
+      v1.1.1 用 34×20 / radius 10（正好等于半高），两端是两个完整半圆，
+      槽里再放一颗 16px 白球 → 读起来就是"两颗球并排"，不像开关。
+      现在 30×17 / radius 4.5，槽是槽、块是块。
+      关闭态底色也不能用 #c9c2b3（米白底上直接融掉，只剩一颗白球）。 */
+#completion_prompt_manager_list .prompt-manager-toggle-action {
+  position: relative;
+  flex: none;
+  display: inline-block !important;
+  width: 30px !important;
+  height: 17px !important;
+  border-radius: 4.5px;
+  background: #b0a897;
+  cursor: pointer;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  box-shadow: inset 0 0 0 1px rgba(74, 66, 54, .1);
+  transition: background .18s, box-shadow .18s;
+  /* ★★ 这条是「开关看着发灰、看不出开还是关」的真凶：
+     st_promptmanager.css:86 给 li 里所有 span span 设了 opacity:.4（hover 才 1）
+     + filter: drop-shadow(0 0 2px black)。
+     我们这颗是自绘的槽+块，被压到 4 成透明度后 #6f6555 只剩浅灰，
+     白块和槽几乎同色 → 用户读不出状态。设计稿里开关是实心的，所以这里锁回 1。 */
+  opacity: 1 !important;
+  filter: none !important;
+}
+#completion_prompt_manager_list .prompt-manager-toggle-action::before { content: none !important; }
+#completion_prompt_manager_list .prompt-manager-toggle-action::after {
+  content: "";
+  position: absolute;
+  top: 3.5px; left: 3px;
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  background: #fbf8f1;
+  box-shadow: 0 1px 1.5px rgba(70, 64, 52, .26);
+  transition: transform .18s;
+}
+#completion_prompt_manager_list .prompt-manager-toggle-action.fa-toggle-on {
+  background: #6f6555;
+  box-shadow: inset 0 0 0 1px rgba(74, 66, 54, .2);
+}
+#completion_prompt_manager_list .prompt-manager-toggle-action.fa-toggle-on::after { transform: translateX(14px); }
+/* 插入点（marker）不能开关：原生给的是空 span，给个锁形状占位，别留个洞 */
+#completion_prompt_manager_list > li.completion_prompt_manager_marker .prompt-manager-toggle-action {
+  display: none !important;
+}
+/* 插入点也没有正文可编辑 → 铅笔是颗"点了没反应"的死按钮，一并藏掉（设计稿 pm-locked 就是这个口径）。
+   行上那个 0 tok 同理，噪声，不显示。 */
+#completion_prompt_manager_list > li.completion_prompt_manager_marker .prompt-manager-edit-action,
+#completion_prompt_manager_list > li.completion_prompt_manager_marker .prompt_manager_prompt_tokens {
+  display: none !important;
+}
+#completion_prompt_manager_list > li.completion_prompt_manager_marker > span:has(> .prompt_manager_prompt_controls)::after {
+  content: "";
+  width: 11px; height: 11px;
+  flex: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%238f8778' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='11' width='14' height='9' rx='2'/><path d='M8 11V7a4 4 0 018 0v4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 11px;
+  opacity: .8;
+}
+
+/* ⑧ 展开的行内编辑器：占满整行，落在第 3 行 */
+#completion_prompt_manager_list > li > .mf-editor {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+/* ⑨ 酒馆原生这条列表底部工具条：隐藏。
+   ★ v1.2.1：用户的口径是「只保留设计稿里有的，别的删掉或隐藏」。
+     这条 (Append prompt 下拉 + 5 个图标) 设计稿里没有；图标还是 FA5 旧类名
+     （fa-chain / fa-x / fa-plus-square），FA6 下多半是方块；而且它要占 89px 高。
+     功能一个都没丢：
+       新建   → 列表头那颗 ＋（脚本还是点它，display:none 也能 .click()）
+       删除   → 行内编辑器的「删除」
+       导入 / 导出 / 清空 → 顶部预设选择条上本来就有同样的三颗
+     想找回来：把下面这条 display:none 删掉，再补回 backup_v121 里被替换掉的排版规则。 */
+#completion_prompt_manager .completion_prompt_manager_footer {
+  display: none !important;
+}
+
+.mf-list-foot { display: flex; align-items: center; gap: 6px; padding: 10px 2px 0; }
+
+/* ── 10.6 行内编辑器 ───────────────────────────────────────────────────── */
+.mf-editor {
+  margin: 8px 0 2px; padding: 10px;
+  min-width: 0;
+  border-radius: 9px; background: var(--mf-paper);
+  border: 1px solid var(--mf-line2);
+  cursor: default;
+}
+.mf-fe-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.mf-fe-head .mf-slb { font-size: 11px; color: var(--mf-ink3); letter-spacing: .02em; }
+.mf-macro { display: flex; gap: 5px; }
+.mf-macro b {
+  font-size: 10.5px; font-weight: 500; padding: 1px 6px; border-radius: 5px;
+  border: 1px solid var(--mf-line2); background: var(--mf-paper2);
+  color: var(--mf-ink2); cursor: pointer;
+}
+.mf-macro b:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); border-color: var(--mf-accent); }
+
+.mf-vwrap { position: relative; }
+.mf-vtext {
+  display: none; padding: 9px 10px; min-height: 60px; max-height: 340px; overflow: auto;
+  font-size: 13px; line-height: 1.75; color: var(--mf-ink);
+  background: var(--mf-paper2); border: 1px solid var(--mf-line); border-radius: 7px;
+  white-space: pre-wrap; word-break: break-word; cursor: text;
+}
+.mf-vwrap.viewing .mf-vtext { display: block; }
+.mf-vwrap.viewing textarea { display: none; }
+.mf-vtext mark { background: var(--mf-hl); color: inherit; border-radius: 2px; padding: 1px 0; }
+.mf-vtext mark.mf-cur { background: var(--mf-hl-cur); box-shadow: 0 0 0 1px var(--mf-mark); }
+.mf-vhint { display: block; margin-top: 5px; font-size: 10.5px; color: var(--mf-ink3); }
+.mf-vwrap:not(.viewing) .mf-vhint { display: none; }
+
+.mf-editor textarea {
+  display: block; width: 100% !important; min-height: 100px; max-height: 340px;
+  padding: 9px 10px; font-family: inherit; font-size: 13px; line-height: 1.75;
+  color: var(--mf-ink) !important; background: var(--mf-paper2) !important;
+  border: 1px solid var(--mf-line) !important; border-radius: 7px;
+  outline: none; box-shadow: none !important; resize: vertical;
+  transition: border-color .15s;
+}
+.mf-editor textarea:focus { border-color: var(--mf-accent) !important; }
+
+.mf-fbar { margin-top: 7px; border: 1px solid var(--mf-line); border-radius: 7px; background: var(--mf-paper2); overflow: hidden; }
+.mf-fbar.mini { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; cursor: pointer; font-size: 11px; color: var(--mf-ink3); }
+.mf-fbar.mini:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-fbar.mini .mf-fic { display: flex; }
+.mf-fbar.mini .mf-fic svg { width: 12px; height: 12px; }
+.mf-fbar.mini .mf-ft { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mf-accent-deep); }
+.mf-fbar.mini .mf-fopen { flex: none; color: var(--mf-ink2); }
+.mf-fbody { padding: 8px 9px 9px; display: none; }
+.mf-fbar.open .mf-fbody { display: block; }
+.mf-frow { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; }
+.mf-flb { flex: none; width: 26px; font-size: 10.5px; color: var(--mf-ink3); padding-top: 6px; }
+.mf-frow textarea {
+  flex: 1; min-width: 0; min-height: 26px !important; max-height: 90px;
+  padding: 5px 7px !important; resize: none; overflow: hidden;
+  font-size: 11.5px !important; line-height: 1.6;
+  background: var(--mf-paper) !important; border: 1px solid var(--mf-line) !important;
+  border-radius: 6px; color: var(--mf-ink) !important;
+}
+.mf-fnav { flex: none; display: flex; align-items: center; gap: 1px; padding-top: 2px; }
+.mf-fnav b { width: 20px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 400; color: var(--mf-ink2); border-radius: 5px; cursor: pointer; }
+.mf-fnav b:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-fnav i { font-size: 10.5px; font-style: normal; color: var(--mf-ink3); min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+.mf-fbtn { display: flex; align-items: center; gap: 5px; }
+.mf-fbtn .mf-chip { height: 22px; font-size: 10.5px; padding: 0 8px; }
+
+.mf-e-meta { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 10.5px; color: var(--mf-ink3); }
+.mf-e-meta .mf-stok { font-variant-numeric: tabular-nums; color: var(--mf-accent-deep); }
+.mf-e-meta .mf-saved { color: var(--mf-ok); opacity: 0; transition: opacity .2s; }
+.mf-e-meta .mf-saved.on { opacity: 1; }
+
+.mf-ed-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.mf-ed-nm, .mf-ed-sel, .mf-ed-num { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--mf-ink2); }
+.mf-ed-nm { flex: 1 1 120px; min-width: 0; }
+.mf-ed-nm input { flex: 1; min-width: 0; width: 100%; }
+.mf-ed-sel select, .mf-ed-num input, .mf-ed-nm input {
+  height: 26px; padding: 0 6px; font-family: inherit; font-size: 11.5px;
+  color: var(--mf-ink) !important; background: var(--mf-paper2) !important;
+  border: 1px solid var(--mf-line2) !important; border-radius: 6px;
+  outline: none; box-shadow: none !important;
+}
+.mf-ed-sel select:focus, .mf-ed-num input:focus, .mf-ed-nm input:focus { border-color: var(--mf-accent) !important; }
+.mf-ed-num input { width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+.mf-ed-spacer { flex: 1; }
+.mf-ed-btn {
+  height: 27px; padding: 0 11px; border-radius: 7px;
+  border: 1px solid var(--mf-line2); background: transparent;
+  color: var(--mf-ink2); font-size: 11.5px; font-family: inherit; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.mf-ed-btn:hover { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-ed-btn.primary { background: var(--mf-accent); border-color: var(--mf-accent); color: #fdfcf8; }
+.mf-ed-btn.primary:hover { background: var(--mf-accent-deep); border-color: var(--mf-accent-deep); }
+.mf-ed-btn.danger:hover { background: rgba(160, 90, 80, .1); color: var(--mf-danger); border-color: rgba(160, 90, 80, .3); }
+
+/* ── 10.7 整体替换弹窗 + toast ────────────────────────────────────────── */
+.mf-pm-modal {
+  position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 3001;
+  display: none; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(40, 36, 30, .34);
+}
+.mf-pm-modal.on { display: flex; }
+.mf-pm-modal-box {
+  width: 360px; max-width: 100%; max-height: 90vh; overflow: auto;
+  background: var(--mf-paper); border: 1px solid var(--mf-line2);
+  border-radius: 14px; box-shadow: 0 18px 50px rgba(50, 44, 34, .24);
+}
+.mf-pm-modal-head { padding: 13px 15px 11px; border-bottom: 1px solid var(--mf-line); font-size: 14px; font-weight: 600; }
+.mf-pm-modal-body { padding: 12px 15px 14px; }
+.mf-mb-lb { font-size: 10.5px; color: var(--mf-ink3); letter-spacing: .03em; margin: 9px 0 5px; }
+.mf-mb-lb:first-child { margin-top: 0; }
+.mf-mb-q {
+  padding: 7px 9px; border-radius: 6px; background: var(--mf-paper2);
+  border: 1px solid var(--mf-line); font-size: 12px; color: var(--mf-ink);
+  max-height: 64px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.mf-pm-modal input {
+  width: 100%; height: 30px; padding: 0 9px; font-family: inherit; font-size: 12px;
+  color: var(--mf-ink) !important; background: var(--mf-paper2) !important;
+  border: 1px solid var(--mf-line2) !important; border-radius: 6px;
+  outline: none; box-shadow: none !important;
+}
+.mf-pm-modal input:focus { border-color: var(--mf-accent) !important; }
+.mf-seg { display: flex; border: 1px solid var(--mf-line2); border-radius: 7px; overflow: hidden; }
+.mf-seg button {
+  flex: 1; height: 28px; border: none; border-right: 1px solid var(--mf-line2);
+  background: var(--mf-paper2); font-family: inherit; font-size: 11.5px;
+  color: var(--mf-ink2); cursor: pointer; transition: background .14s, color .14s;
+}
+.mf-seg button:last-child { border-right: none; }
+.mf-seg button.on { background: var(--mf-accent); color: #fdfcf8; }
+.mf-seg button:hover:not(.on) { background: var(--mf-accent-bg); color: var(--mf-accent-deep); }
+.mf-mb-stat {
+  margin-top: 11px; padding: 7px 9px; border-radius: 6px;
+  background: var(--mf-accent-bg); font-size: 11.5px; color: var(--mf-accent-deep);
+  font-variant-numeric: tabular-nums;
+}
+.mf-mb-stat.none { background: rgba(160, 90, 80, .09); color: var(--mf-danger); }
+.mf-pm-modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 0 15px 14px; }
+
+#mf-pm-toast {
+  position: fixed; left: 50%; bottom: 26px; z-index: 3002;
+  transform: translateX(-50%) translateY(12px);
+  padding: 8px 14px; border-radius: 20px; max-width: 80vw;
+  background: rgba(60, 54, 44, .93); color: #f6f3ec;
+  font-size: 11.5px; box-shadow: 0 8px 24px rgba(40, 34, 26, .28);
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+}
+#mf-pm-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── 10.8 窄面板（手机 / 左栏窄拖）─────────────────────────────────────── */
+/* 真机左栏实测约 250px，比这里写的 520px 还窄 —— 所以上面的基础样式本身就是
+   按 250px 设计的，这里只是再压一点字重和间距。 */
+@media (max-width: 520px) {
+  #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+    padding: 5px 1px 6px !important;
+    column-gap: 4px;
+  }
+  #completion_prompt_manager_list > li > .completion_prompt_manager_prompt_name { font-size: 13px !important; }
+  #completion_prompt_manager_list > li > .prompt_manager_prompt_tokens { width: 30px !important; min-width: 30px !important; max-width: 30px !important; font-size: 10.5px; }
+  #completion_prompt_manager_list > li > span:has(> .prompt_manager_prompt_controls),
+  #completion_prompt_manager_list > li > .prompt_manager_prompt_controls { min-width: 52px; }
+  #completion_prompt_manager_list .prompt-manager-edit-action { width: 20px !important; height: 20px !important; }
+  #completion_prompt_manager_list .prompt-manager-toggle-action { width: 28px !important; height: 16px !important; }
+  #completion_prompt_manager_list .prompt-manager-toggle-action.fa-toggle-on::after { transform: translateX(12px); }
+  .mf-editor { padding: 8px; }
+}
+
+/* ── 10.9 折叠里那些原生控件（滑杆 / 输入框 / 复选框）统一成米白 ──────────
+   这批控件是酒馆原生 .range-block / .inline-drawer，样式来自 style.css：
+   滑杆是 neo-range-slider（粗黑条）、输入框是 .text_pole（灰底）、
+   标题默认居中。折叠起来不显眼，一展开就是另一个世界，得压一遍。
+   只作用在 #ai_response_configuration 里，别的地方一律不动。 */
+#ai_response_configuration .range-block { margin: 0 0 10px !important; }
+#ai_response_configuration .range-block-title {
+  text-align: left !important; justify-content: flex-start !important;
+  font-size: 12px !important; font-weight: 500; color: var(--mf-ink2);
+  margin-bottom: 4px !important;
+}
+#ai_response_configuration .toggle-description {
+  font-size: 10.5px !important; line-height: 1.55; color: var(--mf-ink3);
+  text-align: left !important; margin-bottom: 4px;
+}
+#ai_response_configuration input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 16px; background: transparent; margin: 0;
+}
+#ai_response_configuration input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px; background: var(--mf-line2);
+}
+#ai_response_configuration input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; margin-top: -4.5px;
+  border: none; border-radius: 50%; background: var(--mf-accent);
+  box-shadow: 0 1px 3px rgba(70, 64, 52, .22);
+}
+#ai_response_configuration input[type="number"],
+#ai_response_configuration input[type="text"],
+#ai_response_configuration select,
+#ai_response_configuration textarea {
+  background: var(--mf-paper) !important;
+  border: 1px solid var(--mf-line2) !important;
+  border-radius: 7px !important;
+  color: var(--mf-ink) !important;
+  font-family: inherit; font-size: 12px !important;
+  min-height: 28px; padding: 2px 7px !important;
+  box-shadow: none !important;
+}
+#ai_response_configuration .checkbox_label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--mf-ink2); margin-bottom: 4px;
+}
+#ai_response_configuration input[type="checkbox"],
+#ai_response_configuration input[type="radio"] { accent-color: var(--mf-accent-deep); }
+#ai_response_configuration .inline-drawer-header { padding: 6px 0 !important; font-size: 12.5px; }
+/* 编辑器底栏：标签不许竖着折行 */
+.mf-ed-nm, .mf-ed-sel, .mf-ed-num { white-space: nowrap; }
+.mf-ed-nm { flex: 1 1 150px; }
+.mf-ed-nm input { flex: 1 1 auto; min-width: 60px; }
+.mf-ed-sel select { flex: none; }
+.mf-ed-bar { row-gap: 6px; }
+
+/* 原生 checkbox 是实心黑方块（style.css 里改过 appearance），
+   在米白皮上像一颗颗墨点，重画成米白小方框。 */
+#ai_response_configuration input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none;
+  flex: none; width: 14px; height: 14px; margin: 0;
+  border: 1px solid var(--mf-line2); border-radius: 4px;
+  background: var(--mf-paper); position: relative; cursor: pointer;
+  transition: background .14s, border-color .14s;
+}
+#ai_response_configuration input[type="checkbox"]:checked {
+  background: var(--mf-accent-deep); border-color: var(--mf-accent-deep);
+}
+#ai_response_configuration input[type="checkbox"]:checked::after {
+  content: ""; position: absolute; left: 3px; top: 0;
+  width: 5px; height: 9px; border: 2px solid #fdfcf8;
+  border-top: 0; border-left: 0; transform: rotate(40deg);
+}
+
+/* ── 10.10 v1.3.0：搜索只留命中行 + 锁定拖动 ─────────────────────────────
+   ★ 这一段必须留在文件**最后**：`display:none` 和 10.5 那条 grid 的
+     display 都是 !important，同级别只能靠书写顺序取胜。
+   ★ 为什么用 class 而不是内联 style：内联的非 important 声明压不过
+     原生 `#completion_prompt_manager #completion_prompt_manager_list li`
+     （2 个 id）的 grid 规则，隐藏会失效。 */
+
+/* ① 搜索时，不命中的条目整行不显示（用户要的是「搜 a 就只留带 a 的」） */
+#completion_prompt_manager_list > li.mf-hide {
+  display: none !important;
+}
+
+/* ② 命中行：左侧一道浅黄竖条 + 极浅底色，一眼能认出「这行就是结果」。
+      竖条用 inset box-shadow 画，不占布局，不影响 250px 下的四列宽度。 */
+#completion_prompt_manager_list > li.mf-hit {
+  background: #f7f0de !important;
+  box-shadow: inset 2px 0 0 #c9b184 !important;
+}
+#completion_prompt_manager_list > li.mf-hit:hover {
+  background: #f3ead2 !important;
+}
+/* 命中行被点开编辑时，保持和展开态一致的浅底，不要两块颜色打架 */
+#completion_prompt_manager_list > li.mf-hit.mf-expanded {
+  background: var(--mf-paper) !important;
+  box-shadow: inset 0 0 0 1px var(--mf-line2), inset 2px 0 0 #c9b184 !important;
+}
+
+/* ③ 锁定 / 搜索中：把手变「不可拖」的样子，别让光标骗人 */
+body.mf-pm-locked #completion_prompt_manager_list > li > .drag-handle {
+  cursor: not-allowed !important;
+}
+body.mf-pm-locked #completion_prompt_manager_list > li > .drag-handle::before {
+  opacity: .24 !important;
+}
+body.mf-pm-locked #completion_prompt_manager_list > li:hover > .drag-handle::before {
+  opacity: .32 !important;
+}
+
+/* ④ 搜索 0 命中：把「找到 0 条 0 处」换成一句人话 */
+.mf-find-stat .mf-fs-none { display: none; color: var(--mf-ink3); }
+.mf-find-stat.empty .mf-fs-main { display: none; }
+.mf-find-stat.empty .mf-fs-none { display: inline; }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   11. 顶栏改造（v1.5.0）
+   ─────────────────────────────────────────────────────────────────────────
+   目标：那一排九个图标 → 靠左一条、图标换成自己的线条 SVG、
+         点最左边那颗能把它们全收起来、不常用的那颗还能单独关掉。
+
+   ★ 所有规则都挂在 body.mf-tb-js 下面。
+     JS 没跑 / 用户在管理面板里点了「还原原生顶栏」→ body 上没这个 class
+     → 下面一条都不生效，顶栏完整回到酒馆原生。**这是唯一的安全退路，
+     新加规则时必须继续挂在这个前缀下。**
+
+   ★ 真机结构（ref/st_index.html，别照设计稿写）：
+       <div id="top-bar"></div>                     ← 空壳，只有背景 + 阴影
+       <div id="top-settings-holder">               ← 兄弟节点，不是子节点！
+           <div class="drawer">…</div> ×9
+       </div>
+     #top-bar 高 --bottomFormBlockSize、宽 --sheldWidth（50vw）
+     #top-settings-holder 高 --topBarBlockSize、flex 居中、宽 --sheldWidth
+     .drawer { width:100%; display:flex; justify-content:center }
+     → 所以图标原本是「九等分整条」。要改成靠左一排，必须
+       holder 宽 100% + justify-content:flex-start + .drawer 宽 auto。
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── 11.1 去掉顶栏那条自己的底色带 ──────────────────────────────────
+   原生 #top-bar 是个 absolute 空壳：width:var(--sheldWidth)=50vw、高
+   --bottomFormBlockSize、box-shadow + backdrop-filter + 底色。它只负责
+   「一条横贯的底」，drawer 全都不在它里面（在兄弟节点 holder 里）。
+   胶囊自己会画边缘和阴影，这条空壳必须彻底透明，否则胶囊底下会多出
+   一条 50vw 的横向色带。 */
+
+/* ★★ v1.8.0 外观回归 v1.5.0 的靠左小胶囊（2026-11-04 18:1x）
+   ──────────────────────────────────────────────────────────────────
+   用户在 v1.6.0 通栏版上用了一阵后的原话：
+     「把这一个顶部栏做成之前那样子吧，就是之前展开后的那个
+       小小的样子，那个胶囊的样子，你这个不太行，就是回归上一版，
+       但是功能不要回归。」
+
+   所以这一节只回滚**视觉形态**（宽度 / 布局 / 圆角 / 描边 / 阴影），
+   功能一律保留：折叠整条收走、单颗隐藏+撤销、管理面板+正文字号、
+   还原原生后的三层回头路、手机铺满 —— 这些全在 JS 和 11.5~11.12 里，
+   动这一节碰不到它们。
+
+   ★ 为什么这次要比 v1.5.0 透一点（别直接拷旧版）
+     v1.5.0 被说「不太优雅 / 很素」，根因是填充堆到 .96/.90/.88
+     —— 几乎实心。玻璃的观感来自「透」，实心就只剩一块刷了漆的
+     白板。这次 alpha 压到 .84/.72/.60 —— 纸纹能隐约透上来，但留了描边
+     和内高光勾出厚度，不会像 v1.6 通栏那样漂在空气里。
+
+   ★ 两次都被否掉的方向，不要再自己发挥：
+       v1.5 靠左胶囊（太实）→ 「那么素」
+       v1.6 通栏 100%（太淡、无边界）→ 「不太优雅 / 不太行」
+     结论：形态要小（胶囊），质感要真（半透、有厚度）。 */
+
+body.mf-tb-js #top-bar {
+  background: transparent !important;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  /* ★ v1.9.0：正文顶上来之后，这条 50vw×44px 的透明空壳就架在正文上面了。
+     它自己看不见，但会**拦截点击** —— 顶部那一片的消息点不动、选不了字。
+     它现在是纯装饰、一个像素都不画，所以直接让事件穿过去。 */
+  pointer-events: none !important;
+}
+
+/* ── 11.2 展开态：一条玻璃胶囊，靠左 ─────────────────────────────────
+   原生 holder 是 width:var(--sheldWidth)(50vw) + margin:0 auto + flex 居中，
+   所以「只包住图标、贴左」要三件一起改：width:max-content / margin 归零 /
+   justify-content:flex-start。
+
+   ★ backdrop-filter 在这一版是**必需**的，理由和 v1.7.1 删它时不冲突：
+     v1.7.1 删它，是因为当时胶囊背后是空白的米白纸面 —— 模糊纯色等于没模糊，
+     纯吃 GPU。v1.9.0 让正文从 y=0 铺满、胶囊浮在上面，背后**真的有文字在滚**：
+     不加 blur，半透的胶囊底下会透出字影（"A" 图标旁能看到「砚」字），
+     比糊掉难看得多。加上 blur，字才化成柔和的色块 —— 这才是磨砂玻璃。
+     ★ 前提条件写在这里：**只有在「胶囊浮在正文之上」时才开这条**。
+       如果哪天又改回「顶栏占位、背后是纯背景」，必须把它关掉，
+       否则就是 v1.7.1 那个 1280×44 的纯浪费。
+     ★ 玻璃感仍然是四层叠出来的（模糊只负责「化开背后的内容」）：
+      ① 半透明三段渐变（上亮下略沉，模拟受光面）
+      ② 1px 略深描边（勾出边缘）
+      ③ inset 顶高光 + 底暗线（厚度）
+      ④ 外侧两层柔和投影（离纸面的距离）
+     ★ 外影最后一层原来是 rgba(69,65,58,.95)：30px 的扩散配 .95 的深褐，
+       在米白纸上像一块脏印子。压到 .55 之后才像「压着一片薄玻璃」。 */
+body.mf-tb-js #top-settings-holder {
+  /* ★ v1.9.0：从「文档流里的一条」改成**浮层**。
+     原生是 position:relative 且在流里，`--topBarBlockSize` 让 #sheld 从
+     44px 开始 —— 于是胶囊只占左边 380px，右边那 900px 却仍是 44px 高的
+     空白，正文上不去。用户原话：「这一横排你的只占二分之一，后面还有
+     一半，这一半可以让它被正文露出来 —— 展开的面积会挡着正文，但其他
+     地方不会挡」。
+     改成 fixed 后：正文从 y=0 开始铺满整屏，胶囊像一片浮在纸上的玻璃，
+     只有它自己盖住的那块会挡字；滚动时内容从它下面穿过去。 */
+  position: fixed !important;
+  top: 8px !important;
+  left: 10px !important;
+  right: auto !important;
+  z-index: 4000;
+  width: max-content !important;
+  height: auto !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 2px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  gap: 2px;
+  border-radius: 13px;
+  border: 1px solid rgba(186, 170, 141, .78);
+  /* ① 左上斜向反光（105° 扫过前 44% 渐隐）—— 这是「亮面」的信号，
+        不加它，胶囊在米白纸上就是一块没起伏的白板（v1.5 被说「素」
+        就是这个原因）。纯渐变，零 GPU 代价，不碰 backdrop-filter。
+     ② 竖直三段：上沿受光最亮 → 中段本色 → 下沿略沉，装出厚度。
+     两层叠起来，才像一片有厚度、有反光的薄玻璃。 */
+  background:
+    linear-gradient(105deg,
+      rgba(255, 255, 255, .58) 0%,
+      rgba(255, 255, 255, .14) 26%,
+      rgba(255, 255, 255, 0) 46%),
+    linear-gradient(180deg,
+      rgba(255, 254, 250, .88) 0%,
+      rgba(246, 239, 226, .76) 52%,
+      rgba(232, 222, 202, .62) 100%);
+  /* ★★ v1.9.0 把 backdrop-filter 加回来 —— 但这次是**有条件的**，别照抄别处：
+     之前（v1.7.1）删掉它的理由是「胶囊背后是纯米白纸面，模糊纯色等于没模糊」。
+     v1.9.0 让正文从 y=0 铺满整屏、胶囊浮在上面之后，**背后真的有文字在过**了。
+     这时候不加 blur，半透的胶囊底下会透出字影 —— 截图里 "A" 图标旁边能隐约
+     看到「砚」字，比模糊难看得多。加了 blur，字化成柔和的色块，才是磨砂玻璃。
+     面积只有约 390×40（原来是 1280×44，3.4 倍），且只在展开态存在。
+     ★ 如果以后又听到「卡」：先量这块的尺寸，别再盲删别处的滤镜。 */
+  -webkit-backdrop-filter: blur(16px) saturate(1.08) !important;
+  backdrop-filter: blur(16px) saturate(1.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(150, 136, 110, .20),
+    0 1px 1px rgba(90, 78, 58, .09),
+    0 6px 14px -8px rgba(90, 78, 58, .28),
+    0 16px 30px -22px rgba(69, 65, 58, .55);
+}
+
+body.mf-tb-js #top-settings-holder > .drawer {
+  width: auto !important;
+  flex: 0 0 auto !important;
+  transition: width .26s cubic-bezier(.33, 0, .2, 1), opacity .18s ease;
+}
+
+/* ── 11.3 每颗图标统一成 34×34 的方片 ───────────────────────────────
+   ★ 36px 是通栏版（每格 104）用的：那条是 10 颗均分整屏，图标太小会散。
+     胶囊只有 icon + 2px 间隙那么宽，34 才跟 13px 圆角、2px 内边距配得上。 */
+body.mf-tb-js #top-settings-holder .drawer-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--mf-ink);
+  /* ★ 三步调色史，别再来回试：
+       v1.4 ink2(#79746a)+.62 —— 1080 宽屏上像一排灰点点，太糊；
+       v1.5 ink(#45413a)+.70  —— 清楚了，但填充近实心，整体还是素；
+       v1.6 .58              —— 那是给 1280 通栏配的，拉开一整条才不发灰。
+     v1.8 回到胶囊（总宽约 390px，比通栏窄三倍多），密度回到 .70：
+     胶囊里的图标必须比通栏版显眼一档，否则整块白雾。 */
+  opacity: .70;
+  transition: background .15s ease, color .15s ease, opacity .15s ease;
+}
+body.mf-tb-js #top-settings-holder .drawer-icon:hover {
+  opacity: 1;
+  background: var(--mf-accent-bg) !important;
+  color: var(--mf-accent-deep) !important;
+}
+/* 已经打开的那颗：白片 + 一圈细线，一眼看出当前在哪个面板 */
+body.mf-tb-js #top-settings-holder .drawer-icon.openIcon {
+  opacity: 1;
+  background: var(--mf-paper) !important;
+  color: var(--mf-accent-deep) !important;
+  box-shadow: 0 1px 2px rgba(90, 78, 58, .12), 0 0 0 1px var(--mf-line2);
+}
+
+/* ── 11.4 换图标：藏掉 FontAwesome 字形，换成我们自己的线条 SVG ──────
+   FA 的字形是 .drawer-icon::before 里的 content，所以直接掐掉；
+   SVG 由 index.js 注入（只注入认得的九颗，第三方扩展的抽屉保持原样）。 */
+body.mf-tb-js .drawer-icon.mf-ic::before { content: none !important; }
+body.mf-tb-js .drawer-icon.mf-ic > svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  /* ★ 1.62 在这台机器上偏细，看着发虚；1.85 刚好是小字号的实线 */
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .26s cubic-bezier(.33, 0, .2, 1), opacity .18s ease;
+}
+/* 关掉改造时 SVG 也要一起消失，否则会跟原生的 FA 图标叠成双影 */
+body:not(.mf-tb-js) .drawer-icon.mf-ic > svg { display: none !important; }
+
+/* ── 11.5 折叠键（永远存在的那一颗，插在九颗最前面） ───────────────
+   ★ 它刻意不是 .drawer / .drawer-toggle：酒馆会给 .drawer-toggle 绑开关，
+     套上去会被 toggle 成 openIcon（白片），而它没有 drawer-content 可关。
+     用自定义 class，酒馆完全不认识它。 */
+body.mf-tb-js .mf-tb-tg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* ★ 胶囊版：它不参与均分（本来也没有「格」可均），自己占一颗 + 一条分隔线。
+     通栏版才需要 flex:1 1 0 + max-width:104 —— 那是为了「十颗排成一条线」。
+     回到胶囊后必须改回 0 0 auto，否则它会被拉成半个胶囊宽。 */
+  flex: 0 0 auto;
+  margin-right: 4px;
+  padding-right: 4px;
+  /* 分隔线只暗示「这颗跟那九颗不是一类」，不是画框。.35 在小尺寸上刚好。 */
+  border-right: 1px solid rgba(180, 166, 140, .35);
+}
+body.mf-tb-js .mf-tb-tgi {
+  width: 30px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--mf-ink2);
+  opacity: .70;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, opacity .15s ease;
+}
+body.mf-tb-js .mf-tb-tgi:hover {
+  opacity: 1;
+  background: var(--mf-accent-bg);
+  color: var(--mf-accent-deep);
+}
+body.mf-tb-js .mf-tb-tgi > svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .26s cubic-bezier(.33, 0, .2, 1);
+}
+body:not(.mf-tb-js) .mf-tb-tg { display: none !important; }
+
+/* ── 11.5b 展开态也让正文顶上去（v1.9.0）─────────────────────────────
+   用户要的是「沉浸式」：正文铺满整屏，胶囊像一片浮在纸上的玻璃，
+   **只有胶囊盖住的那块会挡字**，其余地方（尤其右边那 900px）全给正文用。
+   所以他原话是「展开的面积会挡着正文，但其他地方不会挡着正文」。
+
+   实现只要一条：把 --topBarBlockSize 归零。它与 11.6 折叠态用的是同一个
+   开关（#sheld 的 top 和 height 都引用它），所以正文自然从 y=0 开始。
+   配合 11.2 把 holder 改成 position:fixed，胶囊就不占流了。
+
+   ★ 为什么用媒体查询包起来、而不是全局归零：
+     手机/平板是「铺满整行」的形态（11.10），整条本来就要占满宽度，
+     正文必须从它下面开始 —— 浮上去的话胶囊会横着压住正文第一整行。
+     所以只在「宽屏 + 精细指针」下浮起来。
+     这也顺便避开了「要把酒馆原始 --topBarBlockSize 存一份」的麻烦：
+     手机端根本没覆盖过它，用的还是酒馆原值。 */
+@media (min-width: 769px) and (pointer: fine) {
+  body.mf-tb-js:not(.mf-tb-col) { --topBarBlockSize: 0px !important; }
+}
+
+/* ── 11.6 折叠：整条收走，正文顶到屏幕最上面 ─────────────────────────
+   ★ 这才是「收纳」的意思（v1.5.0 改的，之前只把九颗宽度收成 0，
+     holder 和 #sheld 仍然占着 44px，正文被一条空带挡在下面 —— 用户
+     原话「正文还是会被顶部莫名其妙的栏给遮盖住」）。
+
+   真机只有一个开关：--topBarBlockSize。#sheld 的 top 和 height 同时引用它
+   （st_style.css:775-779），把它归零，聊天区自己就撑满，不用手算高度。
+   变量写在 body 上，撤掉 class 就干净还原，不污染 :root。
+
+   折叠后剩下的那颗按钮改成 fixed 浮片：
+     · 不占文档流 → 正文从 y=0 开始，一个字都不会被挡
+     · 半透明 0.42，hover 才实 → 阅读时几乎不存在
+     · 桌面正文是居中的（左右留白 180px+），左侧 30px 那块本来就是空的，
+       浮片压不到任何字。手机记着看 11.10 的收窄。 */
+body.mf-tb-js.mf-tb-col { --topBarBlockSize: 0px !important; }
+
+body.mf-tb-js.mf-tb-col #top-bar { display: none !important; }
+
+body.mf-tb-js.mf-tb-col #top-settings-holder {
+  position: fixed !important;
+  top: 6px !important;
+  left: 8px !important;
+  right: auto !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  z-index: 4000;
+}
+
+/* 九颗直接不渲染 —— holder 已经缩成一颗按钮的浮层，留 0 宽没意义 */
+body.mf-tb-js.mf-tb-col #top-settings-holder > .drawer:not(.mf-tb-tg) {
+  display: none !important;
+}
+body.mf-tb-js.mf-tb-col .mf-tb-tgi > svg { transform: rotate(180deg); }
+
+/* 折叠态那颗浮片：小玻璃片，贴在左上角 */
+body.mf-tb-js.mf-tb-col .mf-tb-tg {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+body.mf-tb-js.mf-tb-col .mf-tb-tgi {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  /* 折叠态只剩这一颗，它自己得撑住「玻璃」的观感 —— 但仍然是淡的：
+     边框 .40、填充 .62→.50、贴地影几乎不可见。太实会变成屏幕角上一块膏药。 */
+  border: 1px solid rgba(197, 183, 158, .40);
+  background: linear-gradient(180deg, rgba(255, 252, 245, .90), rgba(242, 234, 219, .86));
+  /* ★ 这里原来有 blur(8px)。虽然只有 30×30，但它是个 position:fixed 的
+     悬浮层，折叠态下一直在屏幕上——同类离屏合成层越少越稳。
+     背后是纯纸色，模糊不可见，直接去掉，用 .90/.86 的实底代替。 */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .80),
+    0 4px 12px -10px rgba(69, 65, 58, .55);
+  /* .34 在浅色页面上一度淡到「找不到入口」，.40 是「不碍眼但看得见」。 */
+  opacity: .40;
+}
+body.mf-tb-js.mf-tb-col .mf-tb-tgi:hover { opacity: 1; }
+
+/* ── 11.7 单独隐藏某颗（data-mf-hid 由 JS 打） ────────────────────── */
+body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !important; }
+
+/* ── 11.8 按钮管理面板（长按 / 右键顶栏调出） ─────────────────────── */
+#mf-tb-mgmt {
+  position: fixed;
+  z-index: 4005;
+  width: 302px;
+  max-width: calc(100vw - 16px);
+  max-height: min(78vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--mf-paper);
+  border: 1px solid var(--mf-line2);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 #fff inset, 0 18px 40px -26px rgba(69, 65, 58, .85);
+  padding: 12px 13px 13px;
+  color: var(--mf-ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  opacity: 0;
+  transform: translateY(-6px) scale(.99);
+  pointer-events: none;
+  transition: opacity .16s ease, transform .2s cubic-bezier(.33, 0, .2, 1);
+}
+#mf-tb-mgmt.on { opacity: 1; transform: none; pointer-events: auto; }
+
+#mf-tb-mgmt .mf-mg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--mf-line);
+}
+#mf-tb-mgmt .mf-mg-head b { font-size: 13px; font-weight: 600; }
+#mf-tb-mgmt .mf-mg-cnt {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--mf-ink2);
+  background: var(--mf-accent-bg);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+#mf-tb-mgmt .mf-mg-hint {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--mf-ink2);
+}
+#mf-tb-mgmt .mf-mg-list { overflow: auto; flex: 1 1 auto; min-height: 0; }
+
+/* 正文字号行（v1.6.0）。固定在列表下方，不随列表滚走 ——
+   十颗按钮一多，列表能滚，这行不能。 */
+#mf-tb-mgmt .mf-mg-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--mf-line);
+}
+#mf-tb-mgmt .mf-mg-sec-t { font-size: 11.5px; color: var(--mf-ink2); }
+#mf-tb-mgmt .mf-fs { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+#mf-tb-mgmt .mf-fs button {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  width: 26px !important;
+  height: 24px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 7px;
+  border: 1px solid var(--mf-line2) !important;
+  background: var(--mf-paper2) !important;
+  color: var(--mf-ink2) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#mf-tb-mgmt .mf-fs button:hover { background: var(--mf-paper) !important; color: var(--mf-ink) !important; }
+/* 到头了：变灰 + 不能点，比「点了没反应」清楚 */
+#mf-tb-mgmt .mf-fs button:disabled { opacity: .30; cursor: default; }
+#mf-tb-mgmt .mf-fs-v {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mf-ink);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+}
+#mf-tb-mgmt .mf-fs-v:hover { color: var(--mf-accent-deep); }
+
+#mf-tb-mgmt .mf-mg-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: var(--mf-ink2);
+  transition: background .15s ease, opacity .2s ease;
+}
+#mf-tb-mgmt .mf-mg-row:hover { background: var(--mf-accent-bg); }
+#mf-tb-mgmt .mf-mg-row > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .85;
+}
+#mf-tb-mgmt .mf-mg-row > i {
+  width: 16px;
+  flex: 0 0 auto;
+  text-align: center;
+  opacity: .7;
+}
+#mf-tb-mgmt .mf-mg-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mf-tb-mgmt .mf-mg-off {
+  font-size: 10.5px;
+  color: var(--mf-ink3);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+#mf-tb-mgmt .mf-mg-row.is-off { opacity: .55; }
+#mf-tb-mgmt .mf-mg-row.is-off .mf-mg-off { opacity: 1; }
+#mf-tb-mgmt .mf-mg-row.is-off .mf-mg-name { text-decoration: line-through; text-decoration-color: var(--mf-line2); }
+
+/* 小胶囊开关：茶金，不用绿色。
+   v1.6.0 把实心茶金（--mf-mark）降到 .58 —— 九颗一排实心金药丸，
+   在米白面板上像九个按钮，整块面板最抢眼的就是它们，很土。 */
+#mf-tb-mgmt .mf-mg-sw {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 19px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 10px;
+  border: 1px solid rgba(180, 168, 146, .34) !important;
+  background: rgba(180, 168, 146, .20) !important;
+  position: relative;
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: background .18s ease, border-color .18s ease;
+}
+#mf-tb-mgmt .mf-mg-sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--mf-paper);
+  box-shadow: 0 1px 1px rgba(90, 78, 58, .16);
+  transition: transform .2s cubic-bezier(.33, 0, .2, 1);
+}
+#mf-tb-mgmt .mf-mg-sw[aria-checked="true"] {
+  background: rgba(179, 164, 136, .58) !important;
+  border-color: rgba(160, 146, 120, .50) !important;
+}
+#mf-tb-mgmt .mf-mg-sw[aria-checked="true"]::after { transform: translateX(15px); }
+
+#mf-tb-mgmt .mf-mg-foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--mf-line);
+}
+#mf-tb-mgmt .mf-mg-foot .mf-grow { flex: 1; }
+#mf-tb-mgmt .mf-mg-foot button {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  padding: 4px 10px !important;
+  margin: 0 !important;
+  border-radius: 8px;
+  border: 1px solid var(--mf-line2) !important;
+  background: var(--mf-paper2) !important;
+  color: var(--mf-ink2) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  width: auto !important;
+}
+#mf-tb-mgmt .mf-mg-foot button:hover { background: var(--mf-paper) !important; color: var(--mf-ink) !important; }
+/* 「完成」是主操作，其余两个（全部恢复 / 还原原生）是次要且带破坏性 ——
+   给主操作加一层淡茶底，眼睛先落到它身上。 */
+#mf-tb-mgmt .mf-mg-foot button[data-a="done"] {
+  background: var(--mf-accent-bg) !important;
+  border-color: rgba(168, 154, 126, .45) !important;
+  color: var(--mf-accent-deep) !important;
+}
+
+/* ── 11.9 撤销条：贴在顶栏右侧空白处，不压正文 ────────────────────── */
+#mf-tb-toast {
+  position: fixed;
+  top: 7px;
+  right: 12px;
+  z-index: 4006;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 11px;
+  border-radius: 20px;
+  background: #5d564a;
+  color: #f7f2e6;
+  font-family: inherit;
+  font-size: 11.5px;
+  box-shadow: 0 8px 20px -12px rgba(0, 0, 0, .7);
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity .2s ease, transform .22s ease;
+}
+#mf-tb-toast.on { opacity: 1; transform: none; pointer-events: auto; }
+/* 说明类消息（「已还原原生顶栏…」）：比撤销条长，要能折行，不能挤成三条 */
+#mf-tb-toast.mf-toast-wide {
+  max-width: min(430px, calc(100vw - 24px));
+  padding: 7px 8px 7px 12px;
+  border-radius: 14px;
+  line-height: 1.55;
+}
+#mf-tb-toast.mf-toast-wide span { flex: 1 1 auto; }
+#mf-tb-toast button {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px !important;
+  margin: 0 !important;
+  border-radius: 14px;
+  border: 0 !important;
+  background: rgba(255, 255, 255, .16) !important;
+  color: #fffdf8 !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  width: auto !important;
+}
+#mf-tb-toast button:hover { background: rgba(255, 255, 255, .3) !important; }
+
+/* ── 11.10 手机 / 触屏：展开时铺满整条顶栏 ──────────────────────
+   ★ v1.8.0 这段又必须写回来 —— 桌面回到胶囊了，
+     「桌面胶囊 / 手机通栏」的形态翻转就又成了必需。
+     用户当时的原话一直没变：
+       「我试着小屏…也起码要把按键给铺满顶部吧」
+
+   为什么手机不能用胶囊：390px 的屏，一坨小图标挤在左边、
+   右边一大片空，难点也不像导航栏。
+   做法：holder 回到 100% 宽、去胶囊，九个 drawer 各 flex:1 均分，
+   图标在格子里居中 → 十颗均匀铺满整行，每格约 39px（拇指够得着）。
+
+   用 (pointer:coarse) 兜住平板 / 横屏手机：只看宽度会在平板上漏掉。 */
+@media (max-width: 768px), (pointer: coarse) {
+  body.mf-tb-js #top-settings-holder {
+    /* ★ v1.9.0：桌面 11.2 把 holder 改成了 fixed 浮层。手机这边必须**退回
+       文档流**（原生就是 relative），否则整条 100% 宽的顶栏会浮在正文上，
+       把正文第一整行横着压住 —— 那就不是「铺满顶部」，是盖住正文。 */
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 3005;
+    width: 100% !important;
+    height: var(--topBarBlockSize) !important;
+    margin: 0 !important;
+    padding: 0 2px !important;
+    gap: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  body.mf-tb-js #top-settings-holder > .drawer {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    justify-content: center !important;
+  }
+
+  body.mf-tb-js #top-settings-holder .drawer-icon { margin: 0 auto; }
+  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 20px; height: 20px; }
+
+  /* 折叠键不参与均分，固定一颗 —— 它是额外的第十颗，
+     分隔线也不要（铺满一行时那条线会像多出一根格栏）。 */
+  body.mf-tb-js .mf-tb-tg {
+    flex: 0 0 auto !important;
+    margin-right: 0;
+    padding-right: 0;
+    border-right: 0;
+  }
+  body.mf-tb-js .mf-tb-tgi { width: 34px; height: 34px; }
+
+  /* ★ 手机正文左右 padding 只有十几像素，左上角 24px 的浮片必然压到
+     第一行头几个字。给 #sheld 留 26px 顶部边距：视觉上只是「正文上方
+     有一点点留白」，不是一条栏，但浮片就永远碰不到字了。 */
+  body.mf-tb-js.mf-tb-col #sheld { padding-top: 26px; }
+
+  body.mf-tb-js.mf-tb-col .mf-tb-tgi {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    opacity: .30;
+  }
+  body.mf-tb-js.mf-tb-col .mf-tb-tgi > svg { width: 14px; height: 14px; }
+}
+
+/* 窄屏（320~400）：图标再收一档，十颗不换行。
+   算法：9 × 34 + 34 + 2 × 2 = 344，320 的屏装不下 → 缩到 30。 */
+@media (max-width: 400px) {
+  body.mf-tb-js #top-settings-holder .drawer-icon { width: 30px; height: 30px; }
+  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 18px; height: 18px; }
+  body.mf-tb-js .mf-tb-tgi { width: 30px; height: 30px; }
+  body.mf-tb-js .mf-tb-tgi > svg { width: 17px; height: 17px; }
+}
+
+/* ★ 极窄（<330）：每格只剩 24px，图标还留 30px 就会互相压。
+   图标必须跟着格子一起缩，不能只缩格子。
+   （桌面把窗口拖到 250 宽实测：9 格各 24.4，icon 仍报 30 → 重叠） */
+@media (max-width: 330px) {
+  body.mf-tb-js #top-settings-holder .drawer-icon { width: 24px; height: 26px; }
+  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 16px; height: 16px; }
+  body.mf-tb-js .mf-tb-tgi { width: 24px; height: 26px; }
+  body.mf-tb-js .mf-tb-tgi > svg { width: 15px; height: 15px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   12 · 酒馆「扩展设置」里的常驻入口（v1.7.0）
+   ───────────────────────────────────────────────────────────────────────
+   为什么有这一节：
+     顶栏一旦「还原原生」，页面上就再没有属于皮肤的东西 —— 折叠键跟着
+     body.mf-tb-js 一起消失。用户在酒馆里找不到「换回来」的地方。
+     所以往酒馆自己的扩展设置抽屉里放一块常驻卡片，当正门。
+
+   ★ 这些选择器**不加** body.mf-tb-js 前缀 —— 加了就等于「只在扩展版
+     生效」，而这一块存在的唯一意义就是在原生版里也能看见。
+   ★ 也不继承酒馆 .menu_button 的大尺寸：抽屉里按钮本来就密，
+     用 11.5px / 3px 内边距，跟旁边原生扩展的设置项一个密度。
+   ═══════════════════════════════════════════════════════════════════════ */
+#mf-ext-block { margin: 0 0 10px; }
+
+#mf-ext-block .mf-ext {
+  border: 1px solid var(--mf-line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 253, 248, .72), rgba(247, 242, 232, .58));
+  padding: 10px 12px 11px;
+}
+
+#mf-ext-block .mf-ext-h { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+#mf-ext-block .mf-ext-h b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mf-ink);
+  letter-spacing: .02em;
+}
+#mf-ext-block .mf-ext-st {
+  margin-left: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 7px;
+  border-radius: 9px;
+  border: 1px solid rgba(168, 154, 126, .30);
+  background: var(--mf-accent-bg);
+  color: #7c6f57;
+  white-space: nowrap;
+}
+/* 原生态：状态标变灰，一眼看出「现在不是扩展版」 */
+#mf-ext-block.is-off .mf-ext-st {
+  border-color: var(--mf-line);
+  background: rgba(120, 110, 92, .06);
+  color: var(--mf-ink2);
+  opacity: .85;
+}
+
+#mf-ext-block .mf-ext-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+#mf-ext-block .mf-ext-l { flex: 0 0 56px; font-size: 12px; color: var(--mf-ink2); }
+
+#mf-ext-block .mf-ext-btn {
+  width: auto !important;
+  margin: 0 0 0 auto !important;
+  padding: 3px 11px !important;
+  font: inherit;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--mf-line2) !important;
+  background: var(--mf-paper) !important;
+  color: var(--mf-ink) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+#mf-ext-block .mf-ext-btn:hover {
+  background: var(--mf-accent-bg) !important;
+  border-color: rgba(168, 154, 126, .50) !important;
+  color: var(--mf-accent-deep) !important;
+}
+
+#mf-ext-block .mf-ext-fs { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+#mf-ext-block .mf-ext-fs button {
+  width: auto !important;
+  min-width: 30px;
+  margin: 0 !important;
+  padding: 2px 7px !important;
+  font: inherit;
+  font-size: 12.5px !important;
+  line-height: 1.6 !important;
+  border-radius: 7px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--mf-ink2) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+#mf-ext-block .mf-ext-fs button:hover { background: var(--mf-paper) !important; color: var(--mf-ink) !important; }
+#mf-ext-block .mf-ext-fs button:disabled { opacity: .30; cursor: default; }
+#mf-ext-block .mf-ext-v {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mf-ink);
+  font-variant-numeric: tabular-nums;
+}
+#mf-ext-block .mf-ext-tip {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--mf-ink2);
+  opacity: .76;
+}
