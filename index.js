@@ -1,15 +1,3 @@
-/* ── 发布版补充 · 关键数据 + 踩坑清单（完整版见 README.md 顶部） ───────────
-   仓库 https://github.com/zhaoyichan/mf-tavern-skin   · v1.9.0
-   ★ 真机 #top-bar 是 absolute 空壳，9 个 drawer 全在 #top-settings-holder 里；
-     --topBarBlockSize 同时被 #sheld 的 top / height 引用，归零正文才铺满。
-   ★ 正文字号只能写 --mf-read-scale（85%~160%，步进 5%），
-     绝不能改 --fontScale —— 会连带顶栏高度和输入框。
-   ★ 玻璃观感来自「透 + 105° 斜向受光面」，不是亮度；背后有正文时要开 blur(16px)，
-     否则会透出字影。
-   ★ 备份绝不放 third-party/：酒馆按目录扫 manifest，多副本 = 多份 skin.css 互压
-     = 启动后整个界面卡死，且日志无任何报错。
-   ★ 测试页必须有 viewport meta，否则 CDP mobile 下 vw=980，媒体查询全部误判。
-   ─────────────────────────────────────────────────────────────────────── */
 /* ═════════════════════════════════════════════════════════════════════════
    米白护眼 · 整套皮肤       mf-tavern-skin / index.js
    入口脚本 · v1.1.0（v1.1.0 加「预设面板」模块）
@@ -140,7 +128,7 @@
 
     if (window.__mfTavernSkin) return;              // 防重复执行
 
-    var VERSION = '1.9.0';
+    var VERSION = '1.9.2';
     var APP = window.__mfTavernSkin = { version: VERSION, modules: {} };
     var LOG = '[米白护眼]';
 
@@ -154,40 +142,84 @@
     }
 
     /* ═════════════════════════════════════════════════════════════════════
-       模块 1 · style-guard
-       把扩展自己的 <link href="…/mf-tavern-skin/skin.css"> 钉在 head 末尾。
-       为什么：主题的 custom_css 由 power-user.js 在运行中 append 到末尾，
-               Stylish 主题里大量 !important 规则，靠优先级压不住，
-               只能靠顺序 —— 谁最后谁赢。
+       模块 1 · style-guard + 主题接管
+       ★ v1.9.1 重写。旧版是「反复把自己挪到 head 末尾」抢顺序，问题是：
+         主题每次切换/重绘都会往末尾 append <style id="custom-style">，
+         两边来回抢 → 页面上就是 米白 → 报纸 → 米白 → 报纸 连闪三四下
+         （用户实测反馈，不是猜的）。
+       ★ 新做法：不抢顺序，直接把对方关掉。
+         酒馆的 custom_css 有固定 id（st_power.js 的 applyCustomCSS:
+         styleId = 'custom-style'），<style> 支持 disabled 属性，
+         设 true 后整张表不参与层叠计算 —— 报纸/微信读书一点痕迹都不会留。
+         disabled 写在 MutationObserver 回调里，属于渲染前的微任务，
+         没有中间态，所以不闪。
+       ★ 自己的 link 只钉一次（压 user.css 这一类同优先级规则），之后永不移动。
+       ★ 用户关掉整套外观时（mf_skin_on = '0'）这里什么都不做，
+         主题原样保留，保证「关 = 完全是酒馆原主题」。
        ═════════════════════════════════════════════════════════════════════ */
     function initStyleGuard() {
-        var moves = 0;
+        var pinned = false;
 
         function findSkin() {
             return document.querySelector('link[rel="stylesheet"][href*="mf-tavern-skin"]')
                 || byId('mf-skin');
         }
 
-        function pinToEnd() {
+        /* 注意：这里不能用模块 4 里的 rd()/KEY_SKIN —— 模块 1 在模块 4 前面，
+           作用域拿不到。直接读 localStorage，key 必须和模块 4 保持一致。 */
+        function skinWanted() {
+            try { return localStorage.getItem('mf_skin_on') !== '0'; } catch (e) { return true; }
+        }
+
+        function muteTheme() {
+            if (!skinWanted()) return;
+            var ts = document.getElementById('custom-style');
+            if (ts && !ts.disabled) ts.disabled = true;
+        }
+
+        function pinOnce() {
+            if (pinned) return true;
             var node = findSkin();
             if (!node) return false;
-            if (head.lastElementChild !== node) {
-                head.appendChild(node);          // 移动同一节点，不会重新下载
-                moves++;
-            }
+            if (head.lastElementChild !== node) head.appendChild(node);
+            pinned = true;
             return true;
         }
 
-        // 扩展 CSS 和 JS 是并发加载的，link 可能比本脚本晚到 → 多试几次
-        pinToEnd();
-        [200, 900, 2500, 6000].forEach(function (t) { setTimeout(pinToEnd, t); });
+        /* ★ 开关状态必须在页面加载时也生效：否则「关掉整套 → 重启酒馆」之后
+           skin.css 照样会加载，界面会变成「米白配色 + 原生顶栏」的半套状态。
+           注意 link.disabled 的语义：true = 停用。 */
+        function applyLinkState() {
+            var node = findSkin();
+            if (!node) return;
+            var want = skinWanted();
+            if (node.disabled === want) node.disabled = !want;
+        }
 
-        // 主题一换 / 一改自定义 CSS，head 末尾就会多一个 <style>，立刻挪回来
+        function tick() { pinOnce(); applyLinkState(); muteTheme(); }
+
+        tick();
+        [80, 260, 900, 2200].forEach(function (t) { setTimeout(tick, t); });
+
+        /* 主题切换 / 导入主题 / 在设置里改自定义 CSS → 都会新建或重建
+           #custom-style。这里只处理「新增」，不碰位置，所以不会抖。 */
         try {
             var obs = new MutationObserver(function (list) {
+                var touch = false;
                 for (var i = 0; i < list.length; i++) {
-                    if (list[i].addedNodes && list[i].addedNodes.length) { pinToEnd(); return; }
+                    var an = list[i].addedNodes;
+                    if (!an) continue;
+                    for (var j = 0; j < an.length; j++) {
+                        var el = an[j];
+                        if (el.nodeType === 1 && (el.id === 'custom-style'
+                            || el.tagName === 'STYLE' || el.tagName === 'LINK')) {
+                            touch = true;
+                        }
+                    }
                 }
+                /* 扩展重载时酒馆会重建 <link>，新节点 disabled 默认 false，
+                   不重套一遍开关就会在「已关」状态下把皮肤放出来。 */
+                if (touch) { applyLinkState(); muteTheme(); }
             });
             obs.observe(head, { childList: true });
         } catch (e) {
@@ -198,7 +230,7 @@
             if (!findSkin()) {
                 console.warn(LOG, 'skin.css 没找到：检查扩展是否启用，或 manifest.json 的 css 字段');
             } else {
-                console.log(LOG, '皮肤 v' + VERSION + ' 已就位（样式表提升 ' + moves + ' 次）');
+                console.log(LOG, '皮肤 v' + VERSION + ' 已就位（主题接管：' + (skinWanted() ? '开' : '关') + '）');
             }
         }, 3000);
     }
@@ -259,11 +291,13 @@
         if (!mount()) timer = setInterval(tick, 500);
 
         // 快捷回复栏被关掉 / 切到 popout 模式时，把手跟着藏起来
+        // ★ 2026-11-05 性能：原来 1000ms 永久空转。改成 2000ms + 后台标签页直接跳过
         setInterval(function () {
+            if (document.hidden) return;
             var h = byId(HANDLE_ID);
             if (!h) return;
             h.style.display = byId('qr--bar') ? '' : 'none';
-        }, 1000);
+        }, 2000);
     }
 
     /* ═════════════════════════════════════════════════════════════════════
@@ -1638,10 +1672,15 @@
         /* 兜底轮询（2.5s）：抽屉晚渲染 / observer 漏掉重画时补一次。
            ★ v1.2.0 检查项改成 data-mf-prev（属性，不再是节点）。
              现在 decorate() 只写属性，就算误触发也只是几次 setAttribute，不重排。 */
+        /* ★ 2026-11-05 性能：getClientRects() 会强制同步布局，2.5s 一次在滚动时会有毛刺。
+           改成 5s + 后台跳过 + 只查抽屉 class（纯属性读取，不触发布局）。 */
         setInterval(function () {
             try {
+                if (document.hidden) return;
                 var L = listEl();
-                if (!L || !L.getClientRects().length) return;      // 面板没开就不管
+                if (!L) return;
+                var dr = L.closest('.drawer-content');
+                if (dr && !dr.classList.contains('openDrawer')) return;
                 var rows = L.querySelectorAll(ROW);
                 if (!rows.length) return;
                 if (L.querySelectorAll('[data-mf-prev]').length >= rows.length) return;
@@ -1651,7 +1690,7 @@
                 decorateAll();
                 console.log(LOG, '自愈：补装饰 ' + rows.length + ' 行');
             } catch (e) { }
-        }, 2500);
+        }, 5000);
 
         /* 面板是抽屉，打开时才渲染尺寸；每次打开抽屉补一次（幂等，很便宜）
            #ai-config-button / #leftNavDrawerIcon 就是「AI 响应配置」那个抽屉，
@@ -1725,7 +1764,13 @@
         var KEY_ON = 'mf_topbar_on';
         var KEY_COL = 'mf_topbar_collapsed';
         var KEY_HID = 'mf_topbar_hidden';
+        /* ★ 整套外观总开关。模块 1 的 styleWanted() 也直接读这个 key，
+           两处必须一致（那边用 localStorage 原文，不用 rd()）。 */
+        var KEY_SKIN = 'mf_skin_on';
         var KEY_FS = 'mf_reader_scale';   /* 正文字号倍率，1 = 原生 15px */
+        /* v1.9.2 正文左右留白（百分比）。用户要「手机电脑都按比例」，
+           所以存 %, 不存 px —— px 在 1280 上看不出、在 390 上又挤成一条。 */
+        var KEY_PAD = 'mf_read_pad';
 
         /* 名称：第三方扩展的抽屉没登记，就退回它自己的 title */
         var NAMES = {
@@ -1847,6 +1892,58 @@
             applyFs();
         }
 
+        /* ── 正文左右留白（v1.9.2）──────────────────────────────────
+           .mes 的宽度 = 100% - 2×留白（见 skin.css 4.2）。
+
+           ★ 为什么默认 3.5%
+             旧版写死 `width: 93%`，等于每边留 3.5%。默认值和它完全等价，
+             用户不调就还是原来的观感 —— 不擅自改动他已经看过的东西。
+           ★ 为什么用 % 不用 px
+             用户原话「两个都要，按比例来」。px 在 1280 上几乎看不出、
+             在 390 上又会把正文挤成一列。
+           ★ 上限 12%
+             再往上一行就只剩二十来个字，读着反而不舒服；下限 0 是
+             「贴满」，给喜欢满宽（报纸主题 chat_width=100 那种）的人。
+           ★ 和 applyFs 一样：值没变就零副作用。这个函数挂在 apply() 上，
+             apply() 被 MutationObserver 带着跑，无脑写 style 会整页重排。 */
+        var PAD_MIN = 0, PAD_MAX = 12, PAD_STEP = 0.5, PAD_DEF = 3.5;
+
+        function padVal() {
+            var v = parseFloat(rd(KEY_PAD));
+            if (!isFinite(v)) return PAD_DEF;
+            return Math.min(PAD_MAX, Math.max(PAD_MIN, Math.round(v * 10) / 10));
+        }
+
+        /* 3.5% 显示成 "3.5%"，8 显示成 "8%" —— 别写成 8.0% */
+        function padTxt(v) {
+            return (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)) + '%';
+        }
+
+        function applyPad() {
+            var v = padVal();
+            var cur = parseFloat(document.body.style.getPropertyValue('--mf-read-pad'));
+            if (cur !== v) {
+                document.body.style.setProperty('--mf-read-pad', v + '%');
+            }
+            /* 和 applyFs 一样：卡片上那个数也要跟着变，而且必须放在
+               `if (!panel) return` 之前 —— 有人可能从没开过长按面板，
+               一直在扩展设置里调。 */
+            syncExt();
+            if (!panel) return;
+            var lab = panel.querySelector('.mf-pad-v');
+            if (lab) lab.textContent = padTxt(v);
+            var dn = panel.querySelector('[data-a="pad-"]');
+            var up = panel.querySelector('[data-a="pad+"]');
+            if (dn) dn.disabled = v <= PAD_MIN + 1e-6;
+            if (up) up.disabled = v >= PAD_MAX - 1e-6;
+        }
+
+        function bumpPad(dir) {
+            var v = Math.round((padVal() + dir * PAD_STEP) * 10) / 10;
+            wr(KEY_PAD, String(v));
+            applyPad();
+        }
+
         function rows() {
             if (!holder) return [];
             return [].filter.call(holder.children, function (el) {
@@ -1933,6 +2030,7 @@
             }
 
             applyFs();
+            applyPad();
             syncExt();
         }
 
@@ -1986,6 +2084,86 @@
             }
         }
 
+        /* ── 整套外观 ⇄ 酒馆原生（v1.9.1）─────────────────────────────
+           用户场景：另一台手机的主题是「报纸」，装扩展后界面里还留着报纸的
+           底色/背景图/字体 —— 因为旧版只是把米白「盖」上去，没盖到的地方
+           还是报纸。这里改成「接管」：开的时候先把主题的 custom_css 停掉，
+           关的时候把自己整套撤干净、主题原样恢复。
+
+           ★ 顺序不能反：
+             关 → 先 wr(KEY_ON,'0') + apply() 撤顶栏，再禁用 skin.css，
+                  最后恢复主题。反过来会先出现「原生样式 + 改造后顶栏」的错位帧。
+             开 → 先启用 skin.css，再禁主题，最后开顶栏。
+           ★ 不调 setOn() 而是直接 wr + apply()：setOn 会弹自己的 toast，
+             两个 toast 会叠在一起，看起来像出了两次错。
+           ★ 禁用/恢复的是 #custom-style 的 disabled 属性，不删内容、不写文件，
+             所以「关」之后主题完全是原样，刷新也不会丢东西。
+        */
+        function skinLink() {
+            return document.querySelector('link[rel="stylesheet"][href*="mf-tavern-skin"]');
+        }
+        function themeStyleEl() {
+            return document.getElementById('custom-style');
+        }
+        function isSkinOn() { return rd(KEY_SKIN) !== '0'; }
+
+        function applySkin(on, silent) {
+            var link = skinLink();
+            var ts = themeStyleEl();
+
+            /* 先落盘：后面 apply() / syncExt() 会立刻读 isSkinOn()，
+               晚写会让卡片先显示旧状态再跳一下。 */
+            wr(KEY_SKIN, on ? '1' : '0');
+
+            if (on) {
+                if (link) link.disabled = false;
+                if (ts) ts.disabled = true;
+                wr(KEY_ON, '1');
+                /* link 停用期间注入的 SVG / 折叠键被清掉了，这里补回来 */
+                if (holder) {
+                    if (!holder.querySelector('.mf-tb-tg')) tg = makeTg();
+                    decorate();
+                }
+                apply();
+            } else {
+                wr(KEY_ON, '0');
+                apply();                       // 先把顶栏改造撤干净
+                /* ★ 必须手动清掉注入的 SVG 和折叠键：
+                   link 一停用，skin.css 里那条「.mf-tb-svg 隐藏」也没了，
+                   不清就会「原生 FA 图标 + 我们的 SVG」叠成两个图标。
+                   ★ 同时把 .mf-ic 类摘掉，否则下次开启 decorate() 会以为
+                   已经装饰过（它靠 ic.querySelector('svg') 判断，不会重复注入，
+                   但残留的 class 会让 CSS 的 content:none 提前生效）。 */
+                [].forEach.call(document.querySelectorAll('.mf-tb-svg'), function (el) {
+                    var p = el.parentNode;
+                    el.remove();
+                    if (p && p.classList.contains('mf-ic')) p.classList.remove('mf-ic');
+                });
+                [].forEach.call(document.querySelectorAll('.mf-tb-tg'), function (el) {
+                    var par = el.parentNode;
+                    el.remove();
+                    if (par) par.classList.remove('mf-tb-has-tg');
+                });
+                tg = null;
+                if (link) link.disabled = true;
+                if (ts) ts.disabled = false;
+            }
+
+            if (panel && panel.classList.contains('on')) buildList();
+            syncExt();
+
+            if (!silent) {
+                if (on) {
+                    notice('已切到米白皮肤', { ms: 2000 });
+                } else {
+                    notice('已恢复酒馆原生外观 · 主题原样回来了', {
+                        ms: 8000, wide: true, btn: '换回',
+                        onBtn: function () { applySkin(true); }
+                    });
+                }
+            }
+        }
+
         /* ── 管理面板 ───────────────────────────────────────────────── */
         function ensurePanel() {
             if (panel) return panel;
@@ -2004,6 +2182,15 @@
                 '<button type="button" data-a="fs-" title="正文小一点">A−</button>' +
                 '<span class="mf-fs-v" data-a="fs0" title="点击恢复 100%"></span>' +
                 '<button type="button" data-a="fs+" title="正文大一点">A+</button>' +
+                '</div></div>' +
+                /* v1.9.2 左右留白：和字号同一套控件，只是单位换成 %
+                   （见 applyPad 注释：px 在大小屏上表现差太多） */
+                '<div class="mf-mg-sec">' +
+                '<span class="mf-mg-sec-t">左右留白</span>' +
+                '<div class="mf-fs">' +
+                '<button type="button" data-a="pad-" title="正文靠近两边">−</button>' +
+                '<span class="mf-fs-v mf-pad-v" data-a="pad0" title="点击恢复默认 3.5%"></span>' +
+                '<button type="button" data-a="pad+" title="正文离两边远一点">+</button>' +
                 '</div></div>' +
                 '<div class="mf-mg-foot"><span class="mf-grow"></span>' +
                 '<button type="button" data-a="reset">全部恢复</button>' +
@@ -2041,6 +2228,13 @@
                 } else if (a === 'fs0') {
                     wr(KEY_FS, '1');
                     applyFs();
+                } else if (a === 'pad-') {
+                    bumpPad(-1);
+                } else if (a === 'pad+') {
+                    bumpPad(1);
+                } else if (a === 'pad0') {
+                    wr(KEY_PAD, String(PAD_DEF));
+                    applyPad();
                 }
             });
 
@@ -2089,6 +2283,7 @@
             ensurePanel();
             buildList();
             applyFs();      /* 面板可能是刚建的，数值要补一次 */
+            applyPad();
             position();
             panel.classList.add('on');
         }
@@ -2264,23 +2459,44 @@
         function syncExt() {
             var box = byId('mf-ext-block');
             if (!box) return;
-            var on = isOn(), v = fsVal();
+            var on = isOn(), v = fsVal(), sk = isSkinOn();
             /* 所有文本赋值都先比一次：这个函数被 apply() 带着跑，频率不低，
                无脑写 textContent 会让浏览器把这几行字反复标脏、重排。 */
             var st = box.querySelector('.mf-ext-st');
-            var stTxt = on ? '扩展版 · 已接管' : '酒馆原生';
+            var stTxt = !sk ? '酒馆原生' : (on ? '已接管 · 整套米白' : '米白配色 · 原生顶栏');
             if (st && st.textContent !== stTxt) st.textContent = stTxt;
-            box.classList.toggle('is-off', !on);
+            box.classList.toggle('is-off', !sk);
+
+            var btnSkin = box.querySelector('[data-a="skin"]');
+            var skTxt = sk ? '米白皮肤' : '酒馆原生';
+            if (btnSkin && btnSkin.textContent !== skTxt) btnSkin.textContent = skTxt;
+
             var btnToggle = box.querySelector('[data-a="toggle"]');
             var tgTxt = on ? '还原成原生顶栏' : '用回扩展顶栏';
             if (btnToggle && btnToggle.textContent !== tgTxt) btnToggle.textContent = tgTxt;
-            var val = box.querySelector('.mf-ext-v');
+
+            /* ★ 一定要 :not(.mf-ext-padv)：留白那格也带 .mf-ext-v，
+               不加限定会选到字号那个，两行显示同一个数。 */
+            var val = box.querySelector('.mf-ext-v:not(.mf-ext-padv)');
             var vTxt = Math.round(v * 100) + '%';
             if (val && val.textContent !== vTxt) val.textContent = vTxt;
+
+            var pv = box.querySelector('.mf-ext-padv');
+            var pTxt = padTxt(padVal());
+            if (pv && pv.textContent !== pTxt) pv.textContent = pTxt;
+
+            /* 整套关掉时 skin.css 整张被停用，顶栏/字号这些按钮点了也不会生效，
+               置灰比「点了没反应」诚实。 */
             var dn = box.querySelector('[data-a="fs-"]');
             var up = box.querySelector('[data-a="fs+"]');
-            if (dn) dn.disabled = v <= FS_MIN + 1e-6;
-            if (up) up.disabled = v >= FS_MAX - 1e-6;
+            var pdn = box.querySelector('[data-a="pad-"]');
+            var pup = box.querySelector('[data-a="pad+"]');
+            if (btnToggle) btnToggle.disabled = !sk;
+            if (dn) dn.disabled = !sk || v <= FS_MIN + 1e-6;
+            if (up) up.disabled = !sk || v >= FS_MAX - 1e-6;
+            var pv2 = padVal();
+            if (pdn) pdn.disabled = !sk || pv2 <= PAD_MIN + 1e-6;
+            if (pup) pup.disabled = !sk || pv2 >= PAD_MAX - 1e-6;
         }
 
         function mountExt() {
@@ -2296,14 +2512,24 @@
                反复重建。用自己的 class，跟它井水不犯河水。 */
             box.className = 'mf-ext-wrap';
             box.innerHTML =
-                '<div class="mf-ext"><div class="mf-ext-h"><b>米白皮肤 · 顶栏</b>' +
+                '<div class="mf-ext"><div class="mf-ext-h"><b>米白皮肤</b>' +
                 '<span class="mf-ext-st"></span></div>' +
+                /* ★ 整套外观 = 总开关，放第一行。关掉它 = 连 skin.css 都停用，
+                   不只颜色回来，顶栏和字号也一起回原生 —— 这才是「完全原样」。 */
+                '<div class="mf-ext-row"><span class="mf-ext-l">整套外观</span>' +
+                '<button type="button" class="mf-ext-btn" data-a="skin"></button></div>' +
                 '<div class="mf-ext-row"><span class="mf-ext-l">顶栏外观</span>' +
                 '<button type="button" class="mf-ext-btn" data-a="toggle"></button></div>' +
                 '<div class="mf-ext-row"><span class="mf-ext-l">正文字号</span>' +
                 '<span class="mf-ext-fs"><button type="button" data-a="fs-">A−</button>' +
                 '<span class="mf-ext-v"></span>' +
                 '<button type="button" data-a="fs+">A+</button></span></div>' +
+                /* v1.9.2 留白也放一份：用户原话「当然扩展那里你也可以加一个」。
+                   长按面板是快捷入口，扩展卡片是「装完就能找到」的常驻入口。 */
+                '<div class="mf-ext-row"><span class="mf-ext-l">左右留白</span>' +
+                '<span class="mf-ext-fs"><button type="button" data-a="pad-">−</button>' +
+                '<span class="mf-ext-v mf-ext-padv"></span>' +
+                '<button type="button" data-a="pad+">+</button></span></div>' +
                 '<div class="mf-ext-row"><span class="mf-ext-l"></span>' +
                 '<button type="button" class="mf-ext-btn" data-a="panel">打开顶栏设置面板</button></div>' +
                 '<div class="mf-ext-tip">长按或右键顶栏任意位置，也能打开设置面板。</div></div>';
@@ -2316,10 +2542,13 @@
                 e.preventDefault();
                 e.stopPropagation();
                 var a = b.getAttribute('data-a');
-                if (a === 'toggle') setOn(!isOn());
+                if (a === 'skin') applySkin(!isSkinOn());
+                else if (a === 'toggle') setOn(!isOn());
                 else if (a === 'panel') { if (!isOn()) setOn(true); openPanel(); }
                 else if (a === 'fs-') bumpFs(-1);
                 else if (a === 'fs+') bumpFs(1);
+                else if (a === 'pad-') bumpPad(-1);
+                else if (a === 'pad+') bumpPad(1);
             });
 
             syncExt();
@@ -2411,6 +2640,2677 @@
     /* ═════════════════════════════════════════════════════════════════════
        启动
        ═════════════════════════════════════════════════════════════════════ */
+    /* mf-api-panel-module */
+    /* ═════════════════════════════════════════════════════════════════════
+       api-panel   API 连接配置面板（2026-11-05 新增）
+       ─────────────────────────────────────────────────────────────────────
+       目标：把酒馆原生 API 设置面板（#rm_api_block）改成
+             D:\tavern-skin\api-config-v7.html 的样子 —— 分组条在上、表单卡片在下。
+
+       ★ 铁律（改之前先读）
+        1. 只动 #rm_api_block 里面的东西，别碰别处。
+        2. 不删任何原生节点，只搬位置 / 加 class。酒馆的 JS 全靠 id 找元素，
+           搬位置不影响它；搬走反而省得自己重写逻辑。
+        3. 那 6 个原生图标（查看/新建/更新/编辑/重载/删除）隐藏后，
+           由分组条和「⋯」菜单去 .click()，等于借酒馆自己的逻辑干活 ——
+           弹窗、保存、切换全是真的，不是模拟。
+        4. 「分组」= 酒馆原生 Connection Profiles（#connection_profiles），
+           不是另存一套；切换走原生 change 事件，酒馆自己生效。
+
+       ★ 已知边界
+        · 酒馆的 Connection Profile 只存连接相关字段（api/source/key/model/proxy），
+          温度那些在隔壁「AI 响应配置」面板里，这里碰不到。
+        · 所以「采样参数跟着配置切」要另存一层，等第二批做。
+       ═════════════════════════════════════════════════════════════════════ */
+
+    function mfApiEsc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
+
+    /* ★ 酒馆的按钮是 jQuery 绑的事件，原生 .click() 有时不触发（实测 create_connection_profile
+       点了没反应）。统一走 jQuery trigger，没有 jQuery 再退回原生。 */
+    function mfClick(id) {
+        var el = document.getElementById(id);
+        if (!el) return false;
+        try {
+            if (window.jQuery) { window.jQuery(el).trigger('click'); }
+            else { el.click(); }
+        } catch (e) {
+            try { el.click(); } catch (e2) {}
+        }
+        return true;
+    }
+    function mfTriggerChange(el) {
+        if (!el) return;
+        try {
+            if (window.jQuery) { window.jQuery(el).trigger('change'); }
+            else { el.dispatchEvent(new Event('change', { bubbles: true })); }
+        } catch (e) {
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+
+    function initApiPanel() {
+        var block = document.getElementById('rm_api_block');
+        if (!block) { setTimeout(initApiPanel, 600); return; }
+        if (block.dataset.mfApi === '1') return;
+
+        var nativeRow = block.querySelector(':scope > .wide100p');
+        if (!nativeRow) { setTimeout(initApiPanel, 600); return; }
+
+        var mainApiEl = document.getElementById('main_api');
+        var srcEl = document.getElementById('chat_completion_source');
+        if (!mainApiEl || !srcEl) { setTimeout(initApiPanel, 600); return; }
+
+        block.dataset.mfApi = '1';
+
+        /* ══════════════════════════════════════════════════════════════
+           ★ 为什么不接酒馆原生的「连接配置」（#connection_profiles）
+             实测（2026-11-05）：这个客户端里 #connection_profiles 上
+             一个 jQuery 事件都没有（jq._data = []），值还被别的扩展占成
+             "modelTarget:..."，点 6 个图标全是死的。
+             → 分组只能自己做，数据存 localStorage，写回原生控件时用
+               trigger('change'/'input')，酒馆自己会响应（这些控件事件是好的）。
+           ══════════════════════════════════════════════════════════════ */
+        var MF_KEY = 'mf_api_profiles_v1';
+        var PROFILES = [];
+        var curId = '';
+        var pendingNew = null;
+        var openFlag = false;
+
+        /* ── 表单快照：只抓当前可见的控件（不同服务来源字段不同） ───────── */
+        function captureForm() {
+            var o = { main_api: mainApiEl.value, chat_completion_source: srcEl.value, fields: {} };
+            var root = document.getElementById('openai_api') || document;
+            [].slice.call(root.querySelectorAll('input,select,textarea')).forEach(function (el) {
+                if (!el.id || el.type === 'file') return;
+                if (!el.offsetParent) return;                   /* 只存当前显示的 */
+                if (el.id === 'main_api' || el.id === 'chat_completion_source') return;
+                o.fields[el.id] = (el.type === 'checkbox') ? !!el.checked : el.value;
+            });
+            return o;
+        }
+
+        function setNative(id, v, evName) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
+            try {
+                if (window.jQuery) { window.jQuery(el).trigger(evName || 'input'); }
+                else { el.dispatchEvent(new Event(evName || 'input', { bubbles: true })); }
+            } catch (e) {}
+        }
+
+        /* ── 预设解耦（2026-11-05 用户要求：配置动了预设不动，预设动了配置不动）──
+           ★ 根因（实测，别再猜）：酒馆的「预设」文件
+             default-user/OpenAI Settings/*.json 里存着
+             chat_completion_source / custom_model / reverse_proxy /
+             proxy_password 等 API 字段 —— 预设不是只存提示词，它是一整份
+             settings 快照。所以：
+             ① 切配置时无脑 trigger('change')，酒馆会把整份 settings 重刷，
+                预设选择器跟着晃 —— 之前那个「切模型预设也变」的 bug 就是这个；
+             ② 用户切预设时，API 区会被预设里的值直接盖掉。
+           → 这里上两道闸，全程不碰用户的预设文件。
+           ⚠ 别改回「每次都 trigger change」；也别把预设下拉 id 写死成
+             settings_preset_openai —— 这个客户端里没有那个 id，
+             _panel_raw.html 里唯一含 preset 的是 #openai_proxy_preset，
+             而它在 API 区内部，必须排除。 */
+
+        var restoring = false;
+
+        function findPresetSel() {
+            var list = document.querySelectorAll('select');
+            for (var i = 0; i < list.length; i++) {
+                var el = list[i];
+                if (!/preset/i.test((el.id || '') + (el.name || ''))) continue;
+                if (el.closest('#openai_api') || el.closest('#main-API-selector-block')) continue;
+                if (el.closest('#mfGbox')) continue;
+                return el;
+            }
+            return null;
+        }
+
+        /* API 区全量快照。故意不过滤 offsetParent：
+           预设 apply 会把隐藏来源的字段也一起盖掉，漏一个等于没做。 */
+        function snapApiZone() {
+            var o = {};
+            ['#openai_api', '#main-API-selector-block'].forEach(function (rootSel) {
+                var root = document.querySelector(rootSel);
+                if (!root) return;
+                [].slice.call(root.querySelectorAll('input,select,textarea')).forEach(function (el) {
+                    if (!el.id || el.type === 'file') return;
+                    o[el.id] = (el.type === 'checkbox') ? (el.checked ? 1 : 0) : el.value;
+                });
+            });
+            return o;
+        }
+
+        function fillApiZone(snap) {
+            Object.keys(snap).forEach(function (id) {
+                if (id === 'main_api' || id === 'chat_completion_source') return;
+                var el = document.getElementById(id);
+                if (!el || el.disabled) return;
+                /* openai_proxy_preset 是「一键填 URL/密码」的填充器，不是配置。
+                   写它只改显示、绝不能 trigger —— 一 trigger 它会把 URL 反填回去。 */
+                if (id === 'openai_proxy_preset') { el.value = snap[id]; return; }
+                if (el.type === 'checkbox') {
+                    var want = !!snap[id];
+                    if (el.checked !== want) setNative(id, want, 'change');
+                } else if (el.value !== snap[id]) {
+                    setNative(id, snap[id], el.tagName === 'SELECT' ? 'change' : 'input');
+                }
+            });
+        }
+
+        function restoreApiZone(snap) {
+            var m = document.getElementById('main_api');
+            var s = document.getElementById('chat_completion_source');
+            var mChanged = m && snap['main_api'] !== undefined && m.value !== snap['main_api'];
+            var sChanged = s && snap['chat_completion_source'] !== undefined && s.value !== snap['chat_completion_source'];
+            if (mChanged) setNative('main_api', snap['main_api'], 'change');
+            if (sChanged) setNative('chat_completion_source', snap['chat_completion_source'], 'change');
+            /* 来源一变表单整块重建，等重建完再灌别的字段，否则灌进旧 DOM 白费 */
+            if (mChanged || sChanged) setTimeout(function () { fillApiZone(snap); }, 220);
+            else fillApiZone(snap);
+        }
+
+        /* 闸②：用户换预设 → API 区恢复成切换前的样子。
+           捕获阶段先拍快照（这时酒馆还没 apply），apply 完立刻回填。
+           回填排在当前任务之后、浏览器绘制之前，肉眼看不到跳。 */
+        document.addEventListener('change', function (e) {
+            var t = e.target;
+            if (!t || t.tagName !== 'SELECT') return;
+            if (restoring) return;
+            if (!/preset/i.test((t.id || '') + (t.name || ''))) return;
+            if (t.closest('#openai_api') || t.closest('#main-API-selector-block') || t.closest('#mfGbox')) return;
+
+            var snap = snapApiZone();
+            restoring = true;
+            setTimeout(function () {
+                try { restoreApiZone(snap); } catch (err) {}
+                /* 酒馆 apply 预设要 await 读文件，可能是异步的，补一次兜底 */
+                setTimeout(function () {
+                    try { restoreApiZone(snap); } catch (err) {}
+                    setTimeout(function () { restoring = false; }, 280);
+                }, 360);
+            }, 0);
+        }, true);
+
+        function applyProfile(p) {
+            if (!p) return;
+            var ps = findPresetSel();
+            var presetBefore = ps ? ps.value : null;
+
+            /* ★ 只在值真的变了才 trigger('change')。
+               以前每次都 trigger，等于让酒馆把整份 settings 重刷一遍 ——
+               「切配置预设也变」就是这么来的。 */
+            var needMain = !!p.main_api && p.main_api !== mainApiEl.value;
+            var needSrc = !!p.chat_completion_source && p.chat_completion_source !== srcEl.value;
+
+            restoring = true;
+            if (needMain) setNative('main_api', p.main_api, 'change');
+            if (needSrc) setNative('chat_completion_source', p.chat_completion_source, 'change');
+
+            /* 服务来源切换后表单是异步换的，等一拍再灌字段 */
+            setTimeout(function () {
+                try {
+                    Object.keys(p.fields || {}).forEach(function (id) {
+                        setNative(id, p.fields[id], 'input');
+                    });
+                    /* 闸①：预设归位。只改下拉显示，不 trigger ——
+                       一 trigger 就等于重新 apply 那个预设，API 又被盖回去。 */
+                    if (ps && presetBefore !== null && ps.value !== presetBefore) ps.value = presetBefore;
+                } catch (err) {}
+                restoring = false;
+                refreshHead();
+            }, (needMain || needSrc) ? 200 : 40);
+        }
+
+        function loadProfiles() {
+            try {
+                var raw = localStorage.getItem(MF_KEY);
+                if (raw) PROFILES = JSON.parse(raw) || [];
+            } catch (e) { PROFILES = []; }
+            if (!PROFILES.length) {
+                /* 第一次：把当前酒馆的连接存成一条「当前连接」 */
+                PROFILES = [{
+                    id: 'p' + Date.now(),
+                    name: '当前连接',
+                    main_api: mainApiEl.value,
+                    chat_completion_source: srcEl.value,
+                    fields: captureForm().fields
+                }];
+                curId = PROFILES[0].id;
+                persistProfiles();
+            }
+            if (!curId || !PROFILES.some(function (x) { return x.id === curId; })) curId = PROFILES[0].id;
+        }
+
+        function persistProfiles() {
+            try { localStorage.setItem(MF_KEY, JSON.stringify(PROFILES)); } catch (e) {}
+        }
+
+        function curProfile() {
+            for (var i = 0; i < PROFILES.length; i++) if (PROFILES[i].id === curId) return PROFILES[i];
+            return null;
+        }
+
+        function modelOf(p) {
+            var f = (p && p.fields) || {};
+            var keys = ['custom_model_id', 'model_openai_select', 'model_claude_select',
+                'model_deepseek_select', 'model_google_select', 'model_openrouter_select'];
+            for (var i = 0; i < keys.length; i++) if (f[keys[i]]) return f[keys[i]];
+            return '';
+        }
+
+        /* ── 结构：分组条 + 卡片 + 折叠 ───────────────────────────────── */
+        var gbox = document.createElement('section');
+        gbox.className = 'mf-gbox';
+        gbox.id = 'mfGbox';
+        gbox.innerHTML =
+            '<div class="mf-gbox-hd" id="mfGHd">' +
+                '<svg class="mf-arw" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"></path></svg>' +
+                '<span class="mf-nm">连接配置</span>' +
+                '<span class="mf-cnt" id="mfGCnt">0</span>' +
+                '<span class="mf-sp"></span>' +
+                '<span class="mf-now" id="mfGNow"></span>' +
+                '<button class="mf-more" id="mfGMore" type="button" title="更多操作">' +
+                    '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>' +
+                '</button>' +
+                '<button class="mf-addp" id="mfGNew" type="button">' +
+                    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>' +
+                    '<span>新建配置</span>' +
+                '</button>' +
+            '</div>' +
+            '<div class="mf-gbox-bd" id="mfGBody"></div>' +
+            '<div class="mf-menu" id="mfGMenu">' +
+                '<button data-mf="rename">重命名</button>' +
+                '<button data-mf="dup">复制一份</button>' +
+                '<button data-mf="delete" class="mf-danger">删除这条</button>' +
+            '</div>';
+
+        nativeRow.parentNode.insertBefore(gbox, nativeRow);
+        nativeRow.classList.add('mf-native-hide');
+
+        function makeCard(title, note) {
+            var sec = document.createElement('section');
+            sec.className = 'mf-card';
+            sec.innerHTML = '<div class="mf-card-hd"><h4>' + title + '</h4>' +
+                (note ? '<span class="mf-card-note">' + note + '</span>' : '') +
+                '</div><div class="mf-card-bd"></div>';
+            return sec;
+        }
+
+        var c1 = makeCard('连接方式', '聊天补全 / 文本补全 / KoboldAI');
+        var c2 = makeCard('服务来源 · 端点 · 密钥 · 模型', '点「连接」才会真正按这套参数请求');
+        var acc = document.createElement('section');
+        acc.className = 'mf-acc';
+        acc.id = 'mfAcc';
+        acc.innerHTML =
+            '<div class="mf-acc-hd" id="mfAccHd">' +
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>' +
+                '附加参数与后处理<span class="mf-acc-note">3 项</span>' +
+                '<svg class="mf-acc-arw" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"></path></svg>' +
+            '</div>' +
+            '<div class="mf-acc-bd" id="mfAccBd"></div>';
+
+        var after = nativeRow;
+        [c1, c2, acc].forEach(function (el) {
+            after.parentNode.insertBefore(el, after.nextSibling);
+            after = el;
+        });
+
+        /* 搬原生节点 */
+        var mainSel = document.getElementById('main-API-selector-block');
+        if (mainSel) c1.querySelector('.mf-card-bd').appendChild(mainSel);
+
+        var openaiApi = document.getElementById('openai_api');
+        if (openaiApi) c2.querySelector('.mf-card-bd').appendChild(openaiApi);
+
+        ['prompt_post_processing_form', 'customize_additional_parameters', 'auto-connect-checkbox']
+            .forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el) acc.querySelector('.mf-acc-bd').appendChild(el);
+            });
+
+        /* 保存条 */
+        var savbar = document.createElement('div');
+        savbar.className = 'mf-savbar';
+        savbar.innerHTML = '<div class="mf-svtx" id="mfSvTx">改完点「保存」，存成上面那一条</div>' +
+            '<div class="mf-svbtns" id="mfSvBtns"></div>';
+        c2.appendChild(savbar);
+
+        var btnBox = savbar.querySelector('#mfSvBtns');
+        var btnTest = document.getElementById('test_api_button');
+        var btnConnect = document.getElementById('api_button_openai');
+        /* ★「发送测试消息」收进 ⋯ 菜单（2026-11-05 用户要求：怕手滑误点）。
+           ★ 不能 display:none 藏原生按钮 —— 藏了 .click() 不干活（踩过），
+             要用 .mf-native-hide 那种「移出视口但仍是 display:block」的写法。 */
+        if (btnTest) { btnTest.classList.add('mf-native-hide'); savbar.appendChild(btnTest); }
+        if (btnConnect) { btnConnect.classList.add('mf-save'); btnBox.appendChild(btnConnect); }
+
+        var btnSave = document.createElement('button');
+        btnSave.type = 'button';
+        btnSave.className = 'mf-btn-save';
+        btnSave.id = 'mfBtnSave';
+        btnSave.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"></path><path d="M9 4v5h6V4"></path><path d="M9 14h6v6H9z"></path></svg><span>保存</span>';
+        btnBox.appendChild(btnSave);
+
+        /* ⋯ 更多：只放「发送测试消息」，默认收起 */
+        var moreWrap = document.createElement('div');
+        moreWrap.className = 'mf-more-wrap';
+        moreWrap.innerHTML =
+            '<button class="mf-btn-more" id="mfSvMore" type="button" title="更多">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">' +
+                '<circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle>' +
+                '<circle cx="19" cy="12" r="1.8"></circle></svg>' +
+            '</button>' +
+            '<div class="mf-more-menu" id="mfSvMoreMenu">' +
+                '<button type="button" data-act="test">发送测试消息</button>' +
+            '</div>';
+        btnBox.appendChild(moreWrap);
+
+        var moreMenu = moreWrap.querySelector('#mfSvMoreMenu');
+        moreWrap.querySelector('#mfSvMore').onclick = function (e) {
+            e.stopPropagation();
+            moreMenu.classList.toggle('on');
+        };
+        moreMenu.onclick = function (e) {
+            var b = e.target.closest('button[data-act]');
+            if (!b) return;
+            moreMenu.classList.remove('on');
+            if (b.dataset.act === 'test' && btnTest) btnTest.click();
+        };
+        document.addEventListener('click', function (e) {
+            if (!moreWrap.contains(e.target)) moreMenu.classList.remove('on');
+        });
+
+        /* ── 自绘弹层（酒馆的 popup 是复用的，别去抢它） ────────────────── */
+        var mask = document.createElement('div');
+        mask.className = 'mf-mask';
+        mask.id = 'mfMask';
+        mask.innerHTML =
+            '<div class="mf-dlg">' +
+                '<h3 id="mfDlgTitle">标题</h3>' +
+                '<div class="mf-dlg-sub" id="mfDlgSub"></div>' +
+                '<input class="mf-dlg-inp" id="mfDlgInp" type="text">' +
+                '<div class="mf-dlg-ft">' +
+                    '<button class="mf-dlg-cancel" id="mfDlgCancel" type="button">取消</button>' +
+                    '<button class="mf-dlg-ok" id="mfDlgOk" type="button">确定</button>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(mask);
+
+        var dlgResolve = null;
+        function askName(title, sub, def) {
+            return new Promise(function (res) {
+                dlgResolve = res;
+                document.getElementById('mfDlgTitle').textContent = title;
+                document.getElementById('mfDlgSub').textContent = sub || '';
+                var inp = document.getElementById('mfDlgInp');
+                inp.value = def || '';
+                inp.style.display = '';
+                mask.classList.add('on');
+                setTimeout(function () { inp.focus(); inp.select(); }, 40);
+            });
+        }
+        function askConfirm(title, sub) {
+            return new Promise(function (res) {
+                dlgResolve = res;
+                document.getElementById('mfDlgTitle').textContent = title;
+                document.getElementById('mfDlgSub').textContent = sub || '';
+                var inp = document.getElementById('mfDlgInp');
+                inp.value = '';
+                inp.style.display = 'none';
+                mask.classList.add('on');
+            });
+        }
+        function closeDlg(v) {
+            mask.classList.remove('on');
+            if (dlgResolve) { var r = dlgResolve; dlgResolve = null; r(v); }
+        }
+        document.getElementById('mfDlgOk').onclick = function () {
+            var inp = document.getElementById('mfDlgInp');
+            closeDlg(inp.style.display === 'none' ? true : inp.value.trim());
+        };
+        document.getElementById('mfDlgCancel').onclick = function () { closeDlg(null); };
+        mask.onclick = function (e) { if (e.target === mask) closeDlg(null); };
+        document.addEventListener('keydown', function (e) {
+            if (!mask.classList.contains('on')) return;
+            if (e.key === 'Enter') { e.preventDefault(); document.getElementById('mfDlgOk').click(); }
+            if (e.key === 'Escape') { e.preventDefault(); closeDlg(null); }
+        });
+
+        /* ── 渲染 ─────────────────────────────────────────────────────── */
+        function refreshHead() {
+            var p = curProfile();
+            var now = document.getElementById('mfGNow');
+            if (!now) return;
+            if (pendingNew) {
+                now.textContent = '新建中 · ' + (modelOf({ fields: captureForm().fields }) || '未选模型');
+                return;
+            }
+            now.textContent = p ? (p.name + (modelOf(p) ? ' · ' + modelOf(p) : '')) : '';
+        }
+
+        function render() {
+            var cnt = document.getElementById('mfGCnt');
+            var body = document.getElementById('mfGBody');
+            if (cnt) cnt.textContent = PROFILES.length;
+
+            if (body) {
+                var html = '';
+                if (pendingNew) {
+                    html += '<div class="mf-pitem ghost on"><span class="mf-dt"></span>' +
+                        '<span class="mf-pnm">新建中 · ' + mfApiEsc(pendingNew.name) + '</span>' +
+                        '<span class="mf-unsaved">未保存</span><span class="mf-sp"></span></div>';
+                }
+                html += PROFILES.map(function (p) {
+                    var on = (p.id === curId && !pendingNew);
+                    return '<div class="mf-pitem' + (on ? ' on' : '') + '" data-id="' + mfApiEsc(p.id) + '">' +
+                        '<span class="mf-dt"></span>' +
+                        '<span class="mf-pnm">' + mfApiEsc(p.name) + '</span>' +
+                        (on ? '<span class="mf-badge">当前</span>' : '') +
+                        '<span class="mf-sp"></span>' +
+                        '<span class="mf-pmm">' + mfApiEsc(modelOf(p)) + '</span>' +
+                    '</div>';
+                }).join('');
+                body.innerHTML = html;
+            }
+            refreshHead();
+            var tx = document.getElementById('mfSvTx');
+            var lb = document.querySelector('#mfBtnSave span');
+            if (lb) lb.textContent = pendingNew ? '保存并加入' : '保存';
+            if (tx) {
+                tx.textContent = pendingNew
+                    ? '填好端点、选好模型，点右边保存 → 输入名字就出现在上面的分组里'
+                    : '改完点「保存」，存成上面那一条';
+            }
+        }
+
+        /* ── 交互 ─────────────────────────────────────────────────────── */
+        var gHd = document.getElementById('mfGHd');
+        gHd.onclick = function (e) {
+            if (e.target.closest('#mfGNew') || e.target.closest('#mfGMore')) return;
+            openFlag = !openFlag;
+            gbox.classList.toggle('open', openFlag);
+        };
+
+        document.getElementById('mfGBody').onclick = function (e) {
+            var it = e.target.closest('.mf-pitem');
+            if (!it) return;
+            if (it.classList.contains('ghost')) { return; }
+            var id = it.dataset.id;
+            if (pendingNew) { pendingNew = null; }
+            curId = id;
+            var p = curProfile();
+            if (p) applyProfile(p);
+            openFlag = false;
+            gbox.classList.remove('open');
+            render();
+        };
+
+        document.getElementById('mfGNew').onclick = function (e) {
+            e.stopPropagation();
+            if (pendingNew) return;
+            ensureLoaded();
+            pendingNew = { name: '新配置 ' + (PROFILES.length + 1) };
+            /* 清空表单，但保留连接方式和服务来源，省得重选 */
+            setNative('custom_api_url_text', '', 'input');
+            setNative('custom_model_id', '', 'input');
+            openFlag = true;
+            gbox.classList.add('open');
+            render();
+            var u = document.getElementById('custom_api_url_text');
+            if (u) u.focus();
+        };
+
+        /* ⋯ 菜单 */
+        var menu = document.getElementById('mfGMenu');
+        document.getElementById('mfGMore').onclick = function (e) {
+            e.stopPropagation();
+            menu.classList.toggle('on');
+        };
+        document.addEventListener('click', function (e) {
+            if (!menu.contains(e.target) && !e.target.closest('#mfGMore')) menu.classList.remove('on');
+        });
+        menu.onclick = async function (e) {
+            var b = e.target.closest('button[data-mf]');
+            if (!b) return;
+            menu.classList.remove('on');
+            var p = curProfile();
+            if (!p) return;
+
+            if (b.dataset.mf === 'rename') {
+                var nn = await askName('重命名这条配置', '只改名字，不动连接。', p.name);
+                if (nn === null) return;
+                if (!nn) return;
+                p.name = nn;
+                persistProfiles(); render();
+            } else if (b.dataset.mf === 'dup') {
+                var cp = JSON.parse(JSON.stringify(p));
+                cp.id = 'p' + Date.now();
+                cp.name = p.name + ' 副本';
+                PROFILES.splice(PROFILES.indexOf(p) + 1, 0, cp);
+                curId = cp.id;
+                persistProfiles(); render();
+                applyProfile(cp);
+            } else if (b.dataset.mf === 'delete') {
+                if (PROFILES.length <= 1) return;
+                var ok = await askConfirm('删除这条配置', '「' + p.name + '」删掉就找不回来了。');
+                if (!ok) return;
+                PROFILES.splice(PROFILES.indexOf(p), 1);
+                curId = PROFILES[0].id;
+                persistProfiles(); render();
+                applyProfile(PROFILES[0]);
+            }
+        };
+
+        /* 保存 */
+        btnSave.onclick = async function () {
+            ensureLoaded();
+            if (pendingNew) {
+                var nm = await askName('保存到分组', '给这条连接起个名字，存好就出现在上面的分组里。', pendingNew.name);
+                if (nm === null) return;
+                var snap = captureForm();
+                var np = {
+                    id: 'p' + Date.now(),
+                    name: nm || pendingNew.name,
+                    main_api: snap.main_api,
+                    chat_completion_source: snap.chat_completion_source,
+                    fields: snap.fields
+                };
+                PROFILES.unshift(np);
+                pendingNew = null;
+                curId = np.id;
+                persistProfiles();
+                render();
+                return;
+            }
+            var p = curProfile();
+            if (!p) return;
+            var s = captureForm();
+            p.main_api = s.main_api;
+            p.chat_completion_source = s.chat_completion_source;
+            p.fields = s.fields;
+            persistProfiles();
+            render();
+            var tx = document.getElementById('mfSvTx');
+            if (tx) {
+                var old = tx.textContent;
+                tx.textContent = '已保存到「' + p.name + '」';
+                setTimeout(function () { tx.textContent = old; }, 1800);
+            }
+        };
+
+        /* 折叠 */
+        var accEl = document.getElementById('mfAcc');
+        document.getElementById('mfAccHd').onclick = function () { accEl.classList.toggle('open'); };
+
+        /* 模型/来源变动 → 组头跟着变 */
+        ['custom_model_id', 'chat_completion_source', 'main_api'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener('change', function () { setTimeout(refreshHead, 60); });
+        });
+
+        /* ★ 数据初始化必须等面板「真的可见」才做。
+           面板关着的时候所有控件 offsetParent 都是 null，captureForm 会抓成空表，
+           导致「当前连接」这条存下来是空字段，切回去什么都没恢复（实测踩过）。 */
+        var loaded = false;
+        function ensureLoaded() {
+            if (loaded) return;
+            if (!block.offsetParent) return;
+            loaded = true;
+            loadProfiles();
+            render();
+            applyProfile(curProfile());
+            console.log(LOG, '[api-panel] 接管完成，配置', PROFILES.length, '条');
+        }
+        if (block.classList.contains('openDrawer')) setTimeout(ensureLoaded, 260);
+        if (window.MutationObserver) {
+            new MutationObserver(function () {
+                if (block.classList.contains('openDrawer')) setTimeout(ensureLoaded, 260);
+            }).observe(block, { attributes: true, attributeFilter: ['class'] });
+        }
+        render();
+    }
+
+
+
+    /* ══════════════════════════════════════════════════════════════════════
+       世界书「跨书搜索」（2026-11-05 用户要求）
+
+       ★ 用户要的是什么（原话）：
+         「替换就不用做了，只要做搜索就行了…就是你这个 html 的搜索」
+         → 不换原生世界书面板（#WorldInfo 里的书列表 / 条目行 / 编辑区全保留），
+           只在抽屉顶部加一条搜索栏，输入就在【所有世界书】里一起搜。
+           点结果 → 跳到原生面板那本书，滚到那条并展开。
+
+       ★ 原生面板自带的 #world_info_search 只能搜【当前打开的这一本】，
+         做不到跨书。所以数据必须自己拉。
+
+       ★ 数据从哪来（实测 1.18.0 源码）：
+         - 书名：window.SillyTavern.getContext().world_names 优先；
+                 拿不到就退到 #world_editor_select 的 option；再退到 /api/settings/get。
+         - 内容：POST /api/worldinfo/get  {name}  → {entries:{uid:{...}}}
+                 跟原生 loadWorldInfo() 用的是同一个端点。
+         - CSRF：GET /csrf-token → {token}，POST 必须带 X-CSRF-Token，否则 403。
+
+       ★ 跳转怎么定位（原生没有暴露"跳到某条"的入口）：
+         1) $('#world_editor_select').val(i) + dispatch('change') 切书
+         2) 等 .world_entry[uid="N"] 出现
+         3) 没出现（149 条那种书要分页）→ 往原生搜索框 #world_info_search
+            填标题收窄，原生自己的过滤器会把目标排到第一页
+         4) 还不行 → 点分页的下一页，最多翻 40 页
+       ══════════════════════════════════════════════════════════════════════ */
+    function initWorldSearch(retry) {
+        retry = retry || 0;
+        /* ★ 重试要设上限：万一这个客户端的 #WorldInfo / #wi-holder 跟上游不一样，
+             无限 setTimeout 会每 800ms 刷一次，日志全废（API 面板那边就是这么写的，
+             但那边已经验证过 id 对得上，这里没验证过，所以加闸）。 */
+        function giveUp(why) {
+            if (retry < 40) { setTimeout(function () { initWorldSearch(retry + 1); }, 800); }
+            else { console.warn('[mf-ws] 世界书面板没找到（' + why + '），跨书搜索未启用'); }
+        }
+        var wi = document.getElementById('WorldInfo');
+        if (!wi) { giveUp('#WorldInfo 不存在'); return; }
+        var holder = wi.querySelector('#wi-holder');
+        if (!holder) { giveUp('#wi-holder 不存在'); return; }
+        if (wi.dataset.mfWs === '1') return;
+        wi.dataset.mfWs = '1';
+
+        var CACHE = null;          /* [{name, entries:[{uid,comment,keys,content}]}] */
+        var CACHE_AT = 0;
+        var LOADING = null;        /* 正在进行的加载 Promise，防重复拉 */
+        var TOKEN = '';
+        var Q = '';
+        var T0 = 0;
+
+        /* ── 小工具 ─────────────────────────────────────────────────────── */
+        function esc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function escA(s) { return esc(s).replace(/'/g, '&#39;'); }
+        function waitFor(fn, ms) {
+            return new Promise(function (res) {
+                var t0 = Date.now();
+                (function tick() {
+                    var v = null;
+                    try { v = fn(); } catch (e) { v = null; }
+                    if (v) return res(v);
+                    if (Date.now() - t0 > (ms || 4000)) return res(null);
+                    setTimeout(tick, 110);
+                })();
+            });
+        }
+        function ktok(n) {
+            n = n || 0;
+            return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+        }
+
+        /* ── CSRF token ─────────────────────────────────────────────────── */
+        function getToken() {
+            if (TOKEN) return Promise.resolve(TOKEN);
+            return fetch('/csrf-token', { cache: 'no-store' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) { TOKEN = (d && d.token) || ''; return TOKEN; })
+                .catch(function () { return ''; });
+        }
+        function apiPost(url, body) {
+            return getToken().then(function (tk) {
+                var h = { 'Content-Type': 'application/json' };
+                if (tk) h['X-CSRF-Token'] = tk;
+                return fetch(url, {
+                    method: 'POST',
+                    headers: h,
+                    body: JSON.stringify(body || {}),
+                    cache: 'no-cache'
+                });
+            }).then(function (r) {
+                if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
+                return r.json();
+            });
+        }
+
+        /* ── 书名列表 ───────────────────────────────────────────────────── */
+        function bookNames() {
+            /* ① 酒馆注入的全局上下文（1.12+ 有 getContext） */
+            try {
+                var ctx = window.SillyTavern && window.SillyTavern.getContext
+                    ? window.SillyTavern.getContext() : null;
+                if (ctx && ctx.world_names && ctx.world_names.length) {
+                    return Promise.resolve(ctx.world_names.slice());
+                }
+            } catch (e) { /* 忽略，走下一档 */ }
+
+            /* ② 原生下拉里的 option（面板一打开就有） */
+            var sel = document.getElementById('world_editor_select');
+            if (sel && sel.options.length > 1) {
+                var out = [];
+                [].slice.call(sel.options).forEach(function (o) {
+                    if (o.value !== '' && o.textContent.trim()) out.push(o.textContent.trim());
+                });
+                if (out.length) return Promise.resolve(out);
+            }
+
+            /* ③ 最后兜底：问后端 */
+            return apiPost('/api/settings/get', {}).then(function (d) {
+                return (d && d.world_names) ? d.world_names.slice() : [];
+            });
+        }
+
+        /* ── 拉全部世界书 ───────────────────────────────────────────────── */
+        function loadAll(force) {
+            if (!force && CACHE && (Date.now() - CACHE_AT) < 300000) {
+                return Promise.resolve(CACHE);
+            }
+            if (LOADING) return LOADING;
+
+            setStatus('正在读取世界书…');
+
+            LOADING = bookNames().then(function (names) {
+                if (!names.length) throw new Error('没找到任何世界书');
+                var BOOKS = [];
+                var i = 0;
+                var done = 0;
+
+                /* 一次 4 个并发，13 本书大概 1 秒内拉完 */
+                function worker() {
+                    if (i >= names.length) return Promise.resolve();
+                    var name = names[i++];
+                    return apiPost('/api/worldinfo/get', { name: name })
+                        .then(function (d) {
+                            var ents = (d && d.entries) || {};
+                            var rows = Object.keys(ents).map(function (k) {
+                                var e = ents[k] || {};
+                                var keys = (e.key || []).filter(function (x) {
+                                    return typeof x === 'string' && x.trim();
+                                });
+                                var sec = (e.keysecondary || []).filter(function (x) {
+                                    return typeof x === 'string' && x.trim();
+                                });
+                                return {
+                                    uid: Number(e.uid != null ? e.uid : k),
+                                    comment: (e.comment || '').trim(),
+                                    keys: keys.concat(sec),
+                                    content: (e.content || ''),
+                                    /* 状态位：给结果行的小圆点用 */
+                                    st: e.disable ? 0 : (e.constant ? 2 : 1)
+                                };
+                            });
+                            rows.sort(function (a, b) { return a.uid - b.uid; });
+                            BOOKS.push({ name: name, entries: rows });
+                        })
+                        .catch(function (e) {
+                            console.warn('[mf-ws] 读不了世界书：' + name, e);
+                        })
+                        .then(function () {
+                            done++;
+                            if (done % 3 === 0) setStatus('正在读取世界书…  ' + done + '/' + names.length);
+                            return worker();
+                        });
+                }
+
+                var seed = [];
+                for (var s = 0; s < 4; s++) seed.push(worker());
+                return Promise.all(seed).then(function () {
+                    /* 保持和原生下拉一致的顺序 */
+                    BOOKS.sort(function (a, b) {
+                        return names.indexOf(a.name) - names.indexOf(b.name);
+                    });
+                    CACHE = BOOKS;
+                    CACHE_AT = Date.now();
+                    return BOOKS;
+                });
+            }).then(function (books) {
+                LOADING = null;
+                setStatus('');
+                return books;
+            }).catch(function (e) {
+                LOADING = null;
+                setStatus('读取失败：' + (e && e.message ? e.message : e), true);
+                throw e;
+            });
+
+            return LOADING;
+        }
+
+        /* ── 搜索 ───────────────────────────────────────────────────────── */
+        function hitIn(text, q) {
+            if (!text) return -1;
+            return text.toLowerCase().indexOf(q);
+        }
+        function snippet(text, idx, qlen) {
+            var s = Math.max(0, idx - 34);
+            var e = Math.min(text.length, idx + qlen + 66);
+            return (s > 0 ? '…' : '') + text.slice(s, e) + (e < text.length ? '…' : '');
+        }
+        function doSearch(q) {
+            var out = [];
+            (CACHE || []).forEach(function (b) {
+                var hits = [];
+                b.entries.forEach(function (e) {
+                    var w = 0, field = '', snip = '';
+                    var ci = hitIn(e.comment, q);
+                    if (ci >= 0) { w = 3; field = '标题'; }
+                    if (!w) {
+                        for (var i = 0; i < e.keys.length; i++) {
+                            if (hitIn(e.keys[i], q) >= 0) { w = 2; field = '关键词'; break; }
+                        }
+                    }
+                    if (!w) {
+                        var xi = hitIn(e.content, q);
+                        if (xi >= 0) {
+                            w = 1; field = '正文';
+                            snip = snippet(e.content, xi, q.length);
+                        }
+                    }
+                    if (w) hits.push({ e: e, w: w, field: field, snip: snip });
+                });
+                if (!hits.length) return;
+                hits.sort(function (a, b2) {
+                    return (b2.w - a.w) || ((b2.e.content || '').length - (a.e.content || '').length);
+                });
+                out.push({ name: b.name, hits: hits, top: hits[0].w });
+            });
+            out.sort(function (a, b) { return (b.top - a.top) || (b.hits.length - a.hits.length); });
+            return out;
+        }
+
+        function hl(text, q) {
+            if (!q) return esc(text);
+            var i = text.toLowerCase().indexOf(q);
+            if (i < 0) return esc(text);
+            return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length))
+                 + '</mark>' + esc(text.slice(i + q.length));
+        }
+
+        /* ── 渲染 ───────────────────────────────────────────────────────── */
+        var MAX_ROWS = 300;
+
+        function render(q) {
+            if (!panel) return;                         /* UI 还没建好时被提前调用，直接跳过 */
+            if (!q) { panel.style.display = 'none'; wi.classList.remove('mf-ws-on'); return; }
+            panel.style.display = 'block';
+            wi.classList.add('mf-ws-on');
+
+            if (!CACHE) {
+                panel.innerHTML = '<div class="mf-ws-tip">' + esc(statusText || '正在读取世界书…') + '</div>';
+                return;
+            }
+
+            var t = Date.now();
+            var groups = doSearch(q);
+            var total = groups.reduce(function (n, g) { return n + g.hits.length; }, 0);
+            var dt = Date.now() - t;
+
+            var head = '<div class="mf-ws-sum">'
+                + '<span>跨 <b>' + groups.length + '</b> 本书，找到 <b>' + total + '</b> 条'
+                + (dt > 3 ? '<i>' + dt + 'ms</i>' : '') + '</span>'
+                + '<button type="button" class="mf-ws-re" data-act="reload">重新读取</button>'
+                + '</div>';
+
+            if (!total) {
+                panel.innerHTML = head + '<div class="mf-ws-tip">没有匹配「' + esc(q) + '」的条目。<br>'
+                    + '<span>只搜标题 / 关键词 / 正文；换个词试试。</span></div>';
+                return;
+            }
+
+            var n = 0;
+            var body = '';
+            for (var gi = 0; gi < groups.length && n < MAX_ROWS; gi++) {
+                var g = groups[gi];
+                body += '<div class="mf-ws-book">'
+                     + '<div class="mf-ws-bh"><span class="bn">' + hl(g.name, q) + '</span>'
+                     + '<span class="bc">' + g.hits.length + ' 条</span></div>';
+                for (var hi = 0; hi < g.hits.length && n < MAX_ROWS; hi++, n++) {
+                    var h = g.hits[hi];
+                    var e = h.e;
+                    var title = e.comment || (e.keys.length ? '（无标题）' + e.keys.slice(0, 3).join(' / ') : '（无标题）');
+                    var dot = e.st === 2 ? 'always' : (e.st === 0 ? 'off' : 'key');
+                    body += '<div class="mf-ws-hit" data-book="' + escA(g.name) + '" data-uid="' + e.uid + '"'
+                         + ' data-needle="' + escA((e.comment || e.keys[0] || '').slice(0, 30)) + '">'
+                         + '<div class="l1"><i class="dt ' + dot + '"></i>'
+                         + '<span class="tt">' + hl(title, q) + '</span>'
+                         + '<span class="fw">' + h.field + '</span></div>';
+                    if (e.keys.length) {
+                        body += '<div class="l2">' + e.keys.slice(0, 6).map(function (k) {
+                            return hl(k, q);
+                        }).join(' · ') + (e.keys.length > 6 ? ' …' : '') + '</div>';
+                    }
+                    if (h.snip) body += '<div class="l3">' + hl(h.snip, q) + '</div>';
+                    body += '</div>';
+                }
+                body += '</div>';
+            }
+            if (total > n) {
+                body += '<div class="mf-ws-tip">只显示前 ' + n + ' 条，共 ' + total
+                     + ' 条。加长关键词能收窄。</div>';
+            }
+            panel.innerHTML = head + body;
+        }
+
+        /* ── 跳转到原生面板定位 ─────────────────────────────────────────── */
+        function selectBook(name) {
+            var sel = document.getElementById('world_editor_select');
+            if (!sel) return false;
+            var idx = -1;
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].textContent.trim() === name) { idx = i; break; }
+            }
+            if (idx < 0) return false;
+            sel.value = sel.options[idx].value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+
+        function rowOf(uid) {
+            return document.querySelector('#world_popup_entries_list .world_entry[uid="' + uid + '"]');
+        }
+
+        function nextPageBtn() {
+            var box = document.getElementById('world_info_pagination');
+            if (!box) return null;
+            var li = box.querySelector('.paginationjs-next');
+            if (!li || li.classList.contains('disabled')) return null;
+            return li.querySelector('a') || li;
+        }
+
+        function flash(row) {
+            row.classList.add('mf-ws-flash');
+            setTimeout(function () { row.classList.remove('mf-ws-flash'); }, 2200);
+        }
+
+        function expand(row) {
+            var ed = row.querySelector('.world_entry_edit');
+            if (ed && ed.offsetParent) return;          /* 已经展开 */
+            var icon = row.querySelector('.inline-drawer-icon') ||
+                       row.querySelector('.inline-drawer-toggle');
+            if (icon) icon.click();
+        }
+
+        function jumpTo(book, uid, needle) {
+            uid = Number(uid);
+            if (!selectBook(book)) {
+                setStatus('这本书记忆里找不到：' + book, true);
+                return;
+            }
+            /* 清空搜索，回到原生列表 */
+            input.value = '';
+            Q = '';
+            render('');
+            input.blur();
+
+            waitFor(function () {
+                return document.querySelector('#world_popup_entries_list .world_entry');
+            }, 6000).then(function () {
+                var row = rowOf(uid);
+                if (row) return row;
+
+                /* 分页把目标挤到别的页了 → 借原生搜索收窄 */
+                var si = document.getElementById('world_info_search');
+                if (si && needle) {
+                    si.value = needle;
+                    si.dispatchEvent(new Event('input', { bubbles: true }));
+                    return waitFor(function () { return rowOf(uid); }, 2500);
+                }
+                return null;
+            }).then(function (row) {
+                if (row) return row;
+                /* 还是没找到 → 一页页翻 */
+                var tries = 0;
+                return (function turn() {
+                    var b = nextPageBtn();
+                    if (!b || tries++ > 40) return Promise.resolve(null);
+                    b.click();
+                    return waitFor(function () { return rowOf(uid); }, 1400).then(function (r) {
+                        return r || turn();
+                    });
+                })();
+            }).then(function (row) {
+                if (!row) {
+                    setStatus('已切到「' + book + '」，但没定位到第 ' + uid + ' 条（可能被分页或筛选藏住了）', true);
+                    return;
+                }
+                try { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { row.scrollIntoView(); }
+                flash(row);
+                expand(row);
+                setStatus('');
+            });
+        }
+
+        /* ── UI ─────────────────────────────────────────────────────────── */
+        var wrap = document.createElement('div');
+        wrap.className = 'mf-ws';
+        wrap.innerHTML =
+            '<div class="mf-ws-bar">'
+          +   '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+          +        ' stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle>'
+          +        '<path d="M20 20l-3.6-3.6"></path></svg>'
+          +   '<input id="mfWsInput" type="search" autocomplete="off" spellcheck="false"'
+          +        ' placeholder="跨书搜索：所有世界书的标题 / 关键词 / 正文">'
+          +   '<span class="mf-ws-cnt" id="mfWsCnt"></span>'
+          +   '<button type="button" class="mf-ws-clr" id="mfWsClr" title="清空">'
+          +     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"'
+          +        ' stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>'
+          +   '</button>'
+          + '</div>'
+          + '<div class="mf-ws-panel" id="mfWsPanel"></div>';
+
+        holder.parentNode.insertBefore(wrap, holder);
+
+        var input = wrap.querySelector('#mfWsInput');
+        var cnt = wrap.querySelector('#mfWsCnt');
+        var panel = wrap.querySelector('#mfWsPanel');
+        var clr = wrap.querySelector('#mfWsClr');
+        var statusText = '';
+        var statusErr = false;
+
+        function setStatus(txt, isErr) {
+            statusText = txt || '';
+            statusErr = !!isErr;
+            if (!panel) return;
+            if (txt) {
+                cnt.textContent = '';
+            }
+            if (txt && panel.style.display === 'block') {
+                panel.innerHTML = '<div class="mf-ws-tip' + (isErr ? ' err' : '') + '">' + esc(txt) + '</div>'
+                    + (isErr ? '<div class="mf-ws-tip"><button type="button" class="mf-ws-re"'
+                             + ' data-act="reload">重试</button></div>' : '');
+            } else if (!txt && Q && CACHE) {
+                render(Q);
+            }
+        }
+
+        /* 输入：防抖 140ms；首次触发时先拉数据 */
+        function onInput() {
+            var q = input.value.trim();
+            clr.style.display = q ? 'block' : 'none';
+            if (q === Q && CACHE) return;
+            Q = q;
+            if (!q) { render(''); cnt.textContent = ''; return; }
+
+            if (!CACHE) {
+                panel.style.display = 'block';
+                wi.classList.add('mf-ws-on');
+                panel.innerHTML = '<div class="mf-ws-tip">' + esc(statusText || '正在读取世界书…') + '</div>';
+                loadAll(false).then(function () { if (Q) render(Q); }).catch(function () { });
+                return;
+            }
+            render(q);
+        }
+
+        var dbt = 0;
+        input.addEventListener('input', function () {
+            clearTimeout(dbt);
+            dbt = setTimeout(onInput, 140);
+        });
+        input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') {
+                input.value = ''; Q = ''; render(''); clr.style.display = 'none'; input.blur();
+            }
+        });
+        clr.addEventListener('click', function () {
+            input.value = ''; Q = ''; render(''); clr.style.display = 'none'; input.focus();
+        });
+
+        panel.addEventListener('click', function (ev) {
+            var re = ev.target.closest('[data-act="reload"]');
+            if (re) {
+                CACHE = null;
+                loadAll(true).then(function () { if (Q) render(Q); }).catch(function () { });
+                return;
+            }
+            var hit = ev.target.closest('.mf-ws-hit');
+            if (hit) jumpTo(hit.dataset.book, hit.dataset.uid, hit.dataset.needle);
+        });
+
+        /* 抽屉打开时后台预读，这样第一下输入就有结果 */
+        var preload = function () {
+            if (wi.classList.contains('closedDrawer')) return;
+            if (CACHE || LOADING) return;
+            loadAll(false).catch(function () { });
+        };
+        new MutationObserver(preload).observe(wi, { attributes: true, attributeFilter: ['class'] });
+        setTimeout(preload, 2500);
+    }
+
+
+    /* ══════════════════════════════════════════════════════════════
+       世界书面板 · 全功能版（2026-11-05）
+       源码与联调页在工程根目录 _wb_panel.js / worldbook-live-preview.html，
+       改之前先看那段头注释，坑全写在里面。
+       ══════════════════════════════════════════════════════════════ */
+    /* ══════════════════════════════════════════════════════════════════════════
+       世界书面板 · 全功能版（替换原生 #WorldInfo 内容区）  2026-11-05
+
+       ★★ 用户要的是什么（原话）：
+          「就是这个 HTML 有的功能也要做进去。然后新建什么的，不止于这些，
+            反正这功能要有，必须做进去」
+          → 不是只读预览。新建书 / 新建条目 / 编辑全字段 / 删除 / 批量 /
+            整本启停 / 全局激活设置 / 跨书搜索，全都要，而且改了就自动存。
+
+       ★★ 数据从哪来、往哪写（实测 1.18.0 源码，别自己造 API）：
+          · 读：ctx.loadWorldInfo(name) → {entries:{uid:entry}}，走原生缓存
+          · 写：ctx.saveWorldInfo(name, data, true)
+                → 内部 POST /api/worldinfo/edit {name, data}
+                → 同时 worldInfoCache.set() + emit WORLDINFO_UPDATED
+                ★ 一定要用这个而不是自己 fetch：自己 fetch 不会更新原生缓存，
+                  原生再切回这本书会拿旧数据把你刚写的覆盖掉。
+          · 刷新书名：ctx.updateWorldInfoList()（async，重填下拉和 #world_info）
+          · 书名列表：ctx.getWorldInfoNames()
+          · 新建书 = saveWorldInfo(name, {entries:{}}, true) + updateWorldInfoList()
+          · 删除书 = POST /api/worldinfo/delete {name} + updateWorldInfoList()
+            （ctx 没暴露 deleteWorldInfo，只能 fetch；POST 要带 CSRF）
+
+       ★★ 三档口径（只有两个字段，别再造 mode）：
+            禁用 = disable:true ／ 常驻 = constant:true ／ 向量化 = vectorized:true
+            关键词 = 三个都 false（selective 决定要不要关键词）
+
+       ★★ 几个必须遵守的细节：
+          1. 输入框失焦问题：input 事件里只改内存对象 + 标脏，绝不整棵重渲染；
+             只有结构变化（展开/新建/删除/换三档）才 render()。
+          2. 自动保存 700ms 防抖，同一本书合并；保存中再来改动 → 存完再存一次。
+          3. sticky/cooldown/delay/scanDepth 是 number?，null 要兜成空串显示，
+             写回时必须给 null 而不是 0（0 在酒馆里代表"生效 0 条"，语义不同）。
+             ★ 实测用户数据里这几个字段大量是 null，兜错会把行为改掉。
+          4. id 全带 mfWb 前缀：原稿用的是 #body，会撞酒馆的 <body>。
+          5. 单条正文可能几万字，列表里只放关键词片，展开才 full 渲染。
+          6. token 用「字符数 × 0.6」估算（酒馆的 tokenizer 没暴露给扩展）。
+       ══════════════════════════════════════════════════════════════════════════ */
+
+    function initWorldPanel(retry) {
+        retry = retry || 0;
+
+        function giveUp(why) {
+            if (retry < 40) {
+                setTimeout(function () { initWorldPanel(retry + 1); }, 800);
+            } else {
+                console.warn('[mf-wb] 没找到 #WorldInfo（' + why + '），全功能面板未启用');
+            }
+        }
+
+        var wi = document.getElementById('WorldInfo');
+        if (!wi) { giveUp('#WorldInfo 不存在'); return; }
+        if (wi.dataset.mfWb === '1') return;
+        wi.dataset.mfWb = '1';
+
+        /* ── 图标 ─────────────────────────────────────────────────────────── */
+        var SV = {
+            chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+            down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+            left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+            star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.7l6.1-.9z"/></svg>',
+            plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+            search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+            close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+            gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>',
+            copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
+            trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
+            drag: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
+            warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17H2.5L12 3z"/><path d="M12 9v5M12 17.2v.1"/></svg>',
+            check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>',
+            more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg>',
+            key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.8 12.2L20 3"/><path d="M17 6l2.5 2.5"/><path d="M14.5 8.5L17 11"/></svg>'
+        };
+
+        var POS = [
+            [0, '↑Char', '角色定义之前'],
+            [1, '↓Char', '角色定义之后'],
+            [5, '↑EM', '示例消息之前'],
+            [6, '↓EM', '示例消息之后'],
+            [2, '↑AN', '作者注释之前'],
+            [3, '↓AN', '作者注释之后'],
+            [4, '@D 深度', '按深度插入'],
+            [7, 'Outlet', '输出到 outlet 宏']
+        ];
+        var LOGIC = [
+            [0, 'AND ANY', '任一命中即触发'],
+            [3, 'AND ALL', '全部命中才触发'],
+            [2, 'NOT ANY', '任一不命中就触发'],
+            [1, 'NOT ALL', '全部不命中才触发']
+        ];
+
+        /* ── 新条目模板：必须把原生 newWorldInfoEntryDefinition 的字段全带上，
+              少一个字段原生面板渲染/保存就会把它当 undefined 处理 ──────────── */
+        function newEntry(uid) {
+            return {
+                uid: uid,
+                key: [], keysecondary: [], comment: '', content: '',
+                constant: false, vectorized: false, selective: true, selectiveLogic: 0,
+                addMemo: false, order: 100, position: 0, disable: false,
+                ignoreBudget: false, excludeRecursion: false, preventRecursion: false,
+                matchPersonaDescription: false, matchCharacterDescription: false,
+                matchCharacterPersonality: false, matchCharacterDepthPrompt: false,
+                matchScenario: false, matchCreatorNotes: false,
+                delayUntilRecursion: 0, probability: 100, useProbability: true,
+                depth: 4, outletName: '', group: '', groupOverride: false, groupWeight: 100,
+                scanDepth: null, caseSensitive: null, matchWholeWords: null, useGroupScoring: null,
+                automationId: '', role: 0, sticky: null, cooldown: null, delay: null,
+                triggers: []
+            };
+        }
+
+        /* ── 状态 ─────────────────────────────────────────────────────────── */
+        var BOOKS = [];             /* [{name, on, pinned, data}] */
+        var LOADING = null;
+        var LOADED_AT = 0;
+        var view = 'list';
+        var curName = null;
+        var q = '';
+        var fstate = 'all';
+        var sortBy = 'custom';
+        var batch = false;
+        var selUid = {};
+        var openUid = {};
+        var advOpen = {};
+        var gsetOpen = false;
+        var lastScroll = 0;
+
+        /* 自动保存 */
+        var dirty = {};
+        var saveTimer = 0;
+        var saving = false;
+        var savingSince = 0;        /* ★ 防卡死：saving 挂着超过 20s 就强制解锁 */
+        var saveFail = 0;           /* ★ 连续失败次数，成功一次就归零 */
+        var SAVE_FAIL_MAX = 3;
+        var stText = '';
+        var stKind = '';            /* '' | 'on' | 'ok' | 'err' */
+        var stErrAt = 0;
+
+        function getCtx() {
+            try {
+                return (window.SillyTavern && window.SillyTavern.getContext)
+                    ? window.SillyTavern.getContext() : null;
+            } catch (e) { return null; }
+        }
+
+        /* ── 小工具 ───────────────────────────────────────────────────────── */
+        function esc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function escA(s) { return esc(s).replace(/'/g, '&#39;'); }
+        function fmt(n) { return String(n == null ? 0 : n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+        function ktok(n) {
+            n = n || 0;
+            return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
+        }
+        function tokOf(len) { return Math.round((len || 0) * 0.6); }
+        function num(v, d) { return (v === null || v === undefined || isNaN(+v)) ? (d || 0) : +v; }
+        function N(v) { return (v === null || v === undefined || v === '') ? null : Number(v); }
+
+        function keyArr(e) { return (e.key || []).filter(function (x) { return typeof x === 'string' && x.trim(); }); }
+        function secArr(e) { return (e.keysecondary || []).filter(function (x) { return typeof x === 'string' && x.trim(); }); }
+        function clen(e) { return (e.content || '').length; }
+        function triOf(e) { return e.disable ? 'off' : (e.constant ? 'always' : (e.vectorized ? 'vec' : 'key')); }
+
+        function hit(s, k) { return !k || String(s == null ? '' : s).toLowerCase().indexOf(k.toLowerCase()) >= 0; }
+        function hl(s, k) {
+            s = String(s == null ? '' : s);
+            if (!k) return esc(s);
+            var i = s.toLowerCase().indexOf(k.toLowerCase());
+            if (i < 0) return esc(s);
+            return esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + k.length)) + '</mark>' + esc(s.slice(i + k.length));
+        }
+
+        function findBook(n) {
+            for (var i = 0; i < BOOKS.length; i++) if (BOOKS[i].name === n) return BOOKS[i];
+            return null;
+        }
+        function entList(b) {
+            if (!b || !b.data || !b.data.entries) return [];
+            var out = [];
+            for (var k in b.data.entries) {
+                if (Object.prototype.hasOwnProperty.call(b.data.entries, k)) out.push(b.data.entries[k]);
+            }
+            out.sort(function (a, z) { return num(a.uid) - num(z.uid); });
+            return out;
+        }
+        function curEnts() { return entList(findBook(curName)); }
+        function entByUid(u) {
+            var b = findBook(curName);
+            return (b && b.data && b.data.entries) ? (b.data.entries[u] || null) : null;
+        }
+
+        /* ── 保存状态条 ───────────────────────────────────────────────────── */
+        function setStatus(kind, txt) {
+            stKind = kind;
+            stText = txt || '';
+            var el = document.getElementById('mfWbSt');
+            if (!el) return;
+            el.className = 'svst' + (kind ? ' ' + kind : '');
+            el.innerHTML = '<i></i><span>' + esc(stText) + '</span>';
+        }
+
+        /* ── 自动保存（700ms 防抖 + 保存中排队 + 失败重试） ─────────────────
+           ★★★ 2026-11-05 修的真 bug：原来 flush() 一进来就 `dirty = {}`，
+               保存失败只弹红字，没有把书名放回队列 →
+               改动只活在内存里，关掉抽屉 / 刷新酒馆就永久丢失，
+               而且面板显示的是新内容、文件里是旧内容，用户根本看不出来。
+           现在的规矩：
+             ① 只把「这一批」从队列移除，失败原样放回；
+             ② 失败自动重试 3 次（1.2s / 2.4s / 4.8s 退避）；
+             ③ 3 次都失败 → 红字常驻 + 列表上给这本书挂「未保存」标签；
+             ④ saving 标志挂超过 20s 强制作废，防止一次卡死之后永远不再保存。 */
+        function touch(name) {
+            if (!name) return;
+            dirty[name] = true;
+            setStatus('on', '正在保存…');
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(flush, 700);
+        }
+
+        function flush() {
+            /* 卡死保护：上一次保存的 Promise 一直不落地 */
+            if (saving && savingSince && (Date.now() - savingSince > 20000)) {
+                console.warn('[mf-wb] 上次保存超过 20s 没反应，强制解锁');
+                saving = false;
+            }
+
+            var names = [];
+            for (var k in dirty) if (dirty[k]) names.push(k);
+            if (!names.length) { setStatus('ok', '已保存'); return; }
+            if (saving) { setTimeout(flush, 350); return; }
+
+            /* ★ 只清这一批；失败时会被原样放回 */
+            names.forEach(function (n) { delete dirty[n]; });
+
+            saving = true;
+            savingSince = Date.now();
+            setStatus('on', '正在保存…');
+
+            var ctx = getCtx();
+            var jobs = names.map(function (nm) {
+                var b = findBook(nm);
+                if (!b || !b.data) return Promise.resolve();
+                if (ctx && ctx.saveWorldInfo) {
+                    /* ★ 走原生：同时更新 worldInfoCache 与 WORLDINFO_UPDATED 事件 */
+                    return Promise.resolve(ctx.saveWorldInfo(nm, b.data, true));
+                }
+                return apiPost('/api/worldinfo/edit', { name: nm, data: b.data });
+            });
+
+            Promise.all(jobs).then(function () {
+                saving = false;
+                saveFail = 0;
+                setStatus('ok', '已保存');
+                /* 存成功了就把「未保存」标签摘掉（不重绘，免得打断正在打字的人） */
+                var bad = document.querySelectorAll('#mfWb .tag.unsaved');
+                if (bad.length) [].slice.call(bad).forEach(function (n) { n.remove(); });
+                setTimeout(function () {
+                    if (stKind === 'ok' && !Object.keys(dirty).length) setStatus('', '');
+                }, 1600);
+                if (Object.keys(dirty).length) flush();
+            }).catch(function (err) {
+                saving = false;
+                /* ★★ 关键：把没存成功的书放回队列，绝不能让改动凭空消失 */
+                names.forEach(function (n) { dirty[n] = true; });
+
+                var msg = (err && err.message) ? err.message : String(err);
+                console.error('[mf-wb] 保存失败', err, names);
+
+                if (saveFail < SAVE_FAIL_MAX) {
+                    saveFail++;
+                    var wait = 1200 * Math.pow(2, saveFail - 1);   /* 1.2s → 2.4s → 4.8s */
+                    setStatus('err', '保存失败，' + (wait / 1000).toFixed(1) + 's 后重试（'
+                        + saveFail + '/' + SAVE_FAIL_MAX + '）：' + msg);
+                    clearTimeout(saveTimer);
+                    saveTimer = setTimeout(flush, wait);
+                } else {
+                    saveFail = 0;
+                    setStatus('err', '保存失败（已重试 ' + SAVE_FAIL_MAX + ' 次）：' + msg
+                        + ' — 改动还在面板里，先别关');
+                    /* 让「未保存」标签出现在列表上；只有当面板开着才重绘 */
+                    if (view === 'list' || view === 'book') { try { render(); } catch (e) { } }
+                }
+            });
+        }
+
+        /* ── CSRF + POST ──────────────────────────────────────────────────── */
+        var TOKEN = '';
+        function getToken() {
+            if (TOKEN) return Promise.resolve(TOKEN);
+            return fetch('/csrf-token', { cache: 'no-store' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) { TOKEN = (d && d.token) || ''; return TOKEN; })
+                .catch(function () { return ''; });
+        }
+        function apiPost(url, body) {
+            return getToken().then(function (tk) {
+                var h = { 'Content-Type': 'application/json' };
+                if (tk) h['X-CSRF-Token'] = tk;
+                return fetch(url, {
+                    method: 'POST', headers: h,
+                    body: JSON.stringify(body || {}), cache: 'no-cache'
+                });
+            }).then(function (r) {
+                if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
+                return r.json().catch(function () { return {}; });
+            });
+        }
+
+        /* ── 读：书名 + 全局启用 ──────────────────────────────────────────── */
+        function nativeNames() {
+            var ctx = getCtx();
+            try {
+                if (ctx && ctx.getWorldInfoNames) {
+                    var a = ctx.getWorldInfoNames();
+                    if (a && a.length) return a.slice();
+                }
+                if (ctx && ctx.world_names && ctx.world_names.length) return ctx.world_names.slice();
+            } catch (e) { /* 下一档 */ }
+
+            var sel = document.getElementById('world_editor_select');
+            if (sel && sel.options.length > 1) {
+                var out = [];
+                [].slice.call(sel.options).forEach(function (o) {
+                    if (o.value !== '' && o.textContent.trim()) out.push(o.textContent.trim());
+                });
+                if (out.length) return out;
+            }
+            return [];
+        }
+
+        /* ★★★ 关键坑（2026-11-05 现场翻车，别改回去）：
+           酒馆原生 world-info.js 第 1005 行是
+               $('#world_info').append(`<option value='${i}'>${item}</option>`)
+           —— option 的 value 是 **world_names 的下标**（'0','1','2'…），书名在 textContent 里。
+           我原来写 `o.value || o.textContent` 当 key，结果是 "0"/"1"，
+           和 BOOKS[i].name（书名）永远对不上 → 整个列表显示「已启用 0 本」，
+           点开关时 setBookOn 也匹配不到 → 直接 return，用户看到的就是「点了没用」。
+           正确做法：一律用 textContent.trim() 当书名。 */
+        function optName(o) {
+            return String((o && o.textContent) || '').trim();
+        }
+
+        function globalOnSet() {
+            var set = {};
+            var sel = document.getElementById('world_info');
+            if (!sel) return set;
+            [].slice.call(sel.options).forEach(function (o) {
+                var nm = optName(o);
+                if (nm && o.selected) set[nm] = true;
+            });
+            return set;
+        }
+
+        /* ── 读：全部世界书 ───────────────────────────────────────────────── */
+        function loadAll(force) {
+            if (!force && BOOKS.length && (Date.now() - LOADED_AT) < 300000) {
+                return Promise.resolve(BOOKS);
+            }
+            if (LOADING) return LOADING;
+
+            setStatus('on', '正在读取世界书…');
+            var ctx = getCtx();
+            var names = nativeNames();
+
+            LOADING = Promise.resolve().then(function () {
+                if (!names.length) throw new Error('没找到任何世界书');
+                var onSet = globalOnSet();
+                var out = [];
+                var i = 0, done = 0;
+
+                function one(name) {
+                    if (!ctx || !ctx.loadWorldInfo) {
+                        return apiPost('/api/worldinfo/get', { name: name })
+                            .then(function (d) { return d; });
+                    }
+                    return Promise.resolve(ctx.loadWorldInfo(name));
+                }
+
+                function worker() {
+                    if (i >= names.length) return Promise.resolve();
+                    var name = names[i++];
+                    return one(name).catch(function (e) {
+                        console.warn('[mf-wb] 读不了：' + name, e);
+                        return null;
+                    }).then(function (data) {
+                        if (data && data.entries) {
+                            out.push({
+                                name: name,
+                                on: !!onSet[name],
+                                pinned: pinnedOf(name),
+                                data: data
+                            });
+                        }
+                        done++;
+                        if (done % 3 === 0) setStatus('on', '正在读取世界书… ' + done + '/' + names.length);
+                        return worker();
+                    });
+                }
+
+                var seed = [];
+                for (var s = 0; s < 4; s++) seed.push(worker());
+                return Promise.all(seed).then(function () {
+                    out.sort(function (a, b) { return names.indexOf(a.name) - names.indexOf(b.name); });
+                    BOOKS = out;
+                    LOADED_AT = Date.now();
+                    return BOOKS;
+                });
+            }).then(function (books) {
+                LOADING = null;
+                setStatus('', '');
+                return books;
+            }).catch(function (e) {
+                LOADING = null;
+                setStatus('err', '读取失败：' + (e && e.message ? e.message : e));
+                throw e;
+            });
+
+            return LOADING;
+        }
+
+        /* ── 置顶（本地记忆，不写世界书） ─────────────────────────────────── */
+        var PIN_KEY = 'mfWbPins';
+        var PINS = {};
+        try { PINS = JSON.parse(localStorage.getItem(PIN_KEY) || '{}') || {}; } catch (e) { PINS = {}; }
+        function pinnedOf(n) { return !!PINS[n]; }
+        function setPin(n, v) {
+            if (v) PINS[n] = 1; else delete PINS[n];
+            try { localStorage.setItem(PIN_KEY, JSON.stringify(PINS)); } catch (e) { }
+            var b = findBook(n);
+            if (b) b.pinned = !!v;
+        }
+
+        /* ── 统计 ─────────────────────────────────────────────────────────── */
+        function bstat(b) {
+            var on = 0, tok = 0, always = 0, key = 0, off = 0;
+            entList(b).forEach(function (e) {
+                var t = triOf(e);
+                tok += tokOf(clen(e));
+                if (t === 'off') off++;
+                else { on++; if (t === 'always') always++; else key++; }
+            });
+            return { on: on, tot: entList(b).length, tok: tok, always: always, key: key, off: off };
+        }
+        function allStat() {
+            var t = 0, on = 0, tok = 0;
+            BOOKS.forEach(function (b) {
+                var s = bstat(b);
+                t += s.tot; tok += s.tok;
+                if (b.on) on += s.on;
+            });
+            return { tot: t, on: on, tok: tok };
+        }
+
+        /* ── 顶栏 ─────────────────────────────────────────────────────────── */
+        function renderHdr() {
+            var h = '';
+            if (view === 'list') {
+                var st = allStat();
+                /* ★ 一级页不再重复写「世界书」：抽屉头已经写着「世界书」了，
+                     两个标题叠在一起很难看（960 宽真机截图确认过）。
+                     这里只当副标题用，放统计。 */
+                h = '<div class="top">'
+                  + '<span class="ttl" style="font-size:12px;font-weight:400;color:var(--ink3)">'
+                  + BOOKS.length + ' 本 · ' + fmt(st.tot) + ' 条 · ' + ktok(st.tok) + ' tok</span>'
+                  + '<span class="grow"></span>'
+                  + '<span class="iconbtn' + (gsetOpen ? ' on' : '') + '" data-act="gset" title="全局激活设置">' + SV.gear + '</span>'
+                  + '</div>';
+            } else {
+                var b = findBook(curName);
+                h = '<div class="top">'
+                  + '<span class="back" data-act="back" title="返回">' + SV.left + '</span>'
+                  + '<span class="ttl">' + esc(curName) + '</span>'
+                  + '<span class="grow"></span>'
+                  + '<span class="morewrap">'
+                  +   '<span class="iconbtn" data-act="more" title="更多">' + SV.more + '</span>'
+                  +   '<span class="moremenu" id="mfWbMore">'
+                  +     '<button type="button" data-act="export">' + SV.copy + '导出本书 JSON</button>'
+                  +     '<button type="button" data-act="delbook" class="danger">' + SV.trash + '删除整本世界书</button>'
+                  +     '<button type="button" data-act="native">' + SV.gear + '临时切回原生面板</button>'
+                  +   '</span>'
+                  + '</span>'
+                  + '<span class="iconbtn' + (batch ? ' on' : '') + '" data-act="batch" title="批量选择">' + SV.check + '</span>'
+                  + '</div>';
+            }
+            document.getElementById('mfWbHdr').innerHTML = h;
+        }
+
+        /* ── 搜索行 ───────────────────────────────────────────────────────── */
+        function renderSrow() {
+            var h = '<div class="srow">'
+              + '<span class="sbox' + (q ? ' has' : '') + '">' + SV.search
+              + '<input id="mfWbQin" autocomplete="off" placeholder="'
+              + (view === 'list' ? '搜书 / 跨书搜条目' : '搜标题 / 关键词 / 正文') + '" value="' + escA(q) + '">'
+              + '<span class="clr" data-act="clrq">' + SV.close + '</span>'
+              + '</span>';
+            if (view === 'list') {
+                h += '<span class="chip" data-act="newbook">' + SV.plus + '新建</span>';
+            } else {
+                h += '<select class="sel" id="mfWbSort">'
+                  + '<option value="custom"' + (sortBy === 'custom' ? ' selected' : '') + '>自定义序</option>'
+                  + '<option value="title"' + (sortBy === 'title' ? ' selected' : '') + '>标题 A-Z</option>'
+                  + '<option value="token"' + (sortBy === 'token' ? ' selected' : '') + '>Token ↓</option>'
+                  + '<option value="order"' + (sortBy === 'order' ? ' selected' : '') + '>Order ↓</option>'
+                  + '<option value="prob"' + (sortBy === 'prob' ? ' selected' : '') + '>触发% ↑</option>'
+                  + '</select>';
+            }
+            h += '</div>';
+            document.getElementById('mfWbSrow').innerHTML = h;
+
+            var qin = document.getElementById('mfWbQin');
+            if (qin) {
+                /* ★ 输入法组字期间不重渲染，否则中文打一个字就掉一次 */
+                var composing = false;
+                qin.addEventListener('compositionstart', function () { composing = true; });
+                qin.addEventListener('compositionend', function () {
+                    composing = false;
+                    q = this.value;
+                    renderBody();
+                });
+                qin.addEventListener('input', function () {
+                    if (composing) return;
+                    var pos = this.selectionStart;
+                    q = this.value;
+                    renderBody();
+                    var again = document.getElementById('mfWbQin');
+                    if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (e) { } }
+                });
+            }
+            var ss = document.getElementById('mfWbSort');
+            if (ss) ss.addEventListener('change', function () { sortBy = this.value; renderBody(); });
+        }
+
+        /* ── 一级：书列表 ─────────────────────────────────────────────────── */
+        function bookRow(b) {
+            var s = bstat(b);
+            return '<div class="brow' + (b.on ? '' : ' dis') + '" data-act="open" data-name="' + escA(b.name) + '">'
+              + '<span class="star' + (b.pinned ? ' on' : '') + '" data-act="pin" data-name="' + escA(b.name) + '" title="置顶">' + SV.star + '</span>'
+              + '<span class="bn">' + hl(b.name, q) + '</span>'
+              + (dirty[b.name] ? '<span class="tag unsaved" title="还没写进文件，别关面板">未保存</span>' : '')
+              + (b.on ? '<span class="tag global">全局</span>' : '')
+              + '<span class="bc">' + (b.on ? s.on : 0) + '/' + s.tot + '</span>'
+              + '<span class="bt">' + ktok(s.tok) + '</span>'
+              + '<span class="sw' + (b.on ? ' on' : '') + '" data-act="tbook" data-name="' + escA(b.name) + '" title="整本启用 / 停用"></span>'
+              + '<span class="into">' + SV.chev + '</span>'
+              + '</div>';
+        }
+
+        function gnum(id, label, min, max) {
+            return '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">' + label + '</label>'
+              + '<input class="ti" type="number" id="' + id + '" min="' + min + '" max="' + max + '" data-g="' + id + '">'
+              + '</div>';
+        }
+        function gck(id, label) {
+            return '<label class="ck"><input type="checkbox" id="' + id + '" data-g="' + id + '">' + label + '</label>';
+        }
+
+        function viewList() {
+            var h = '';
+
+            if (gsetOpen) {
+                h += '<div style="padding:10px 13px 4px;border-bottom:1px solid var(--line2)">'
+                  + '<div style="font-size:11px;color:var(--ink3);margin-bottom:8px;font-weight:600">全局激活设置<span style="font-weight:400"> · 改了立刻存进酒馆设置</span></div>'
+                  + '<div class="grid3">'
+                  + gnum('wi_depth_in', '扫描深度', 0, 1000)
+                  + gnum('wi_budget_in', 'Context %', 1, 100)
+                  + gnum('wi_cap_in', '预算上限', 0, 65536)
+                  + '</div>'
+                  + '<div class="grid3" style="margin-top:7px">'
+                  + gnum('wi_minact_in', '最小激活', 0, 100)
+                  + gnum('wi_maxdepth_in', '最大深度', 0, 100)
+                  + gnum('wi_rec_in', '递归步数', 0, 10)
+                  + '</div>'
+                  + '<div class="fld" style="margin-top:9px">'
+                  + '<label>插入策略</label>'
+                  + '<select class="ts" id="wi_strategy_in" data-g="wi_strategy_in">'
+                  + '<option value="0">均匀排序</option><option value="1">角色书优先</option><option value="2">全局书优先</option>'
+                  + '</select></div>'
+                  + '<div class="grid2" style="margin-top:2px">'
+                  + gck('wi_names_in', '包含角色名') + gck('wi_recursive_in', '递归扫描')
+                  + gck('wi_case_in', '区分大小写') + gck('wi_whole_in', '整词匹配')
+                  + gck('wi_gscore_in', '组内计分') + gck('wi_overflow_in', '溢出提示')
+                  + '</div></div>';
+            }
+
+            /* 跨书命中 */
+            if (q) {
+                var hits = [];
+                BOOKS.forEach(function (b) {
+                    entList(b).forEach(function (e) {
+                        var t = (e.comment || '') + '\n' + (e.content || '') + '\n' + keyArr(e).join(' ');
+                        if (hit(t, q)) hits.push({ b: b, e: e });
+                    });
+                });
+                if (hits.length) {
+                    h += '<div style="padding:9px 13px 3px;font-size:11px;color:var(--ink3)">跨书命中 <b style="color:var(--ink2)">'
+                      + hits.length + '</b> 条</div><div class="list">';
+                    h += hits.slice(0, 60).map(function (x) {
+                        return '<div class="brow" data-act="jump" data-name="' + escA(x.b.name) + '" data-uid="' + x.e.uid + '">'
+                          + '<span class="star"></span>'
+                          + '<span class="bn">' + (x.e.comment ? hl(x.e.comment, q) : '<span class="none">无标题</span>') + '</span>'
+                          + '<span class="tag bkname">' + esc(x.b.name) + '</span>'
+                          + '<span class="bt">' + ktok(tokOf(clen(x.e))) + '</span>'
+                          + '<span class="into">' + SV.chev + '</span>'
+                          + '</div>';
+                    }).join('');
+                    if (hits.length > 60) h += '<div class="empty">还有 ' + (hits.length - 60) + ' 条，缩小范围再搜</div>';
+                    h += '</div>';
+                }
+            }
+
+            var onBooks = BOOKS.filter(function (b) { return b.on; });
+            var offBooks = BOOKS.filter(function (b) { return !b.on; });
+            /* 置顶的排前面 */
+            function sortPin(a, z) {
+                if (a.pinned !== z.pinned) return a.pinned ? -1 : 1;
+                return 0;
+            }
+            onBooks.sort(function (a, z) { return sortPin(a, z) || (a.name > z.name ? 1 : -1); });
+            offBooks.sort(function (a, z) { return sortPin(a, z) || (a.name > z.name ? 1 : -1); });
+
+            h += '<div class="list">';
+            h += '<div class="grp open"><div class="ghead"><span class="cv">' + SV.chev + '</span>'
+              + '<span class="gn">已启用<i>对所有聊天生效</i></span>'
+              + '<span class="gnum"><b>' + onBooks.length + '</b> 本</span></div><div class="gbody">'
+              + (onBooks.length ? onBooks.map(bookRow).join('') : '<div class="empty">还没启用任何书</div>')
+              + '</div></div>';
+
+            h += '<div class="grp open"><div class="ghead"><span class="cv">' + SV.chev + '</span>'
+              + '<span class="gn">未启用<i>点开关才会生效</i></span>'
+              + '<span class="gnum">' + offBooks.length + ' 本</span></div><div class="gbody">'
+              + (offBooks.length ? offBooks.map(bookRow).join('') : '<div class="empty">全部已启用</div>')
+              + '</div></div>';
+            h += '</div>';
+
+            document.getElementById('mfWbBody').innerHTML = h;
+            if (gsetOpen) applyGsetRead();
+        }
+
+        /* 全局设置：从原生隐藏控件读 → 填进我们的输入框；改动写回原生控件并触发 input */
+        var GMAP = {
+            wi_depth_in: ['world_info_depth', 'num'],
+            wi_budget_in: ['world_info_budget', 'num'],
+            wi_cap_in: ['world_info_budget_cap', 'num'],
+            wi_minact_in: ['world_info_min_activations', 'num'],
+            wi_maxdepth_in: ['world_info_min_activations_depth_max', 'num'],
+            wi_rec_in: ['world_info_max_recursion_steps', 'num'],
+            wi_strategy_in: ['world_info_character_strategy', 'sel'],
+            wi_names_in: ['world_info_include_names', 'ck'],
+            wi_recursive_in: ['world_info_recursive', 'ck'],
+            wi_case_in: ['world_info_case_sensitive', 'ck'],
+            wi_whole_in: ['world_info_match_whole_words', 'ck'],
+            wi_gscore_in: ['world_info_use_group_scoring', 'ck'],
+            wi_overflow_in: ['world_info_overflow_alert', 'ck']
+        };
+
+        function applyGsetRead() {
+            Object.keys(GMAP).forEach(function (key) {
+                var cfg = GMAP[key];
+                var nat = document.getElementById(cfg[0]);
+                var mine = document.getElementById(key);
+                if (!nat || !mine) return;
+                if (cfg[1] === 'ck') mine.checked = !!nat.checked;
+                else mine.value = nat.value;
+            });
+        }
+
+        /* ★ 只写「被改的那一个」，绝不能遍历全表：
+             遍历会把还没填值的其它输入框（=''）回灌给原生控件，当场把全局设置清空。 */
+        function writeOne(key) {
+            var cfg = GMAP[key];
+            if (!cfg) return;
+            var nat = document.getElementById(cfg[0]);
+            var mine = document.getElementById(key);
+            if (!nat || !mine) return;
+
+            if (cfg[1] === 'ck') {
+                if (nat.checked === mine.checked) return;
+                nat.checked = mine.checked;
+                nat.dispatchEvent(new Event('change', { bubbles: true }));
+                nat.dispatchEvent(new Event('input', { bubbles: true }));
+                return;
+            }
+            if (String(nat.value) === String(mine.value)) return;
+            nat.value = mine.value;
+            /* 下拉只听 change；数字框原生监听 input（会顺带同步 counter） */
+            if (cfg[1] === 'sel') nat.dispatchEvent(new Event('change', { bubbles: true }));
+            else nat.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        /* ── 二级：书内 ───────────────────────────────────────────────────── */
+        function filteredEnts() {
+            var a = curEnts();
+            if (fstate !== 'all') {
+                a = a.filter(function (e) {
+                    var t = triOf(e);
+                    if (fstate === 'always') return t === 'always';
+                    if (fstate === 'key') return t === 'key' || t === 'vec';
+                    if (fstate === 'off') return t === 'off';
+                    return true;
+                });
+            }
+            if (q) {
+                a = a.filter(function (e) {
+                    return hit(e.comment, q) || hit(e.content, q) || hit(keyArr(e).join(' '), q)
+                        || hit(secArr(e).join(' '), q);
+                });
+            }
+            if (sortBy === 'title') a.sort(function (x, y) { return (x.comment || '').localeCompare(y.comment || '', 'zh'); });
+            if (sortBy === 'token') a.sort(function (x, y) { return clen(y) - clen(x); });
+            if (sortBy === 'order') a.sort(function (x, y) { return num(y.order) - num(x.order); });
+            if (sortBy === 'prob') a.sort(function (x, y) { return num(x.probability, 100) - num(y.probability, 100); });
+            return a;
+        }
+
+        function triBtns(e, lg) {
+            var t = triOf(e);
+            return '<span class="tri' + (lg ? ' lg' : '') + '">'
+              + [['off', '禁用'], ['key', '关键词'], ['always', '常驻']].map(function (kv) {
+                  return '<button type="button" data-tr="' + kv[0] + '"' + (t === kv[0] ? ' class="on"' : '') + '>' + kv[1] + '</button>';
+              }).join('')
+              + '</span>';
+        }
+
+        function entRow(e) {
+            var t = triOf(e);
+            var open = !!openUid[e.uid];
+            var sel = !!selUid[e.uid];
+            var ks = keyArr(e).slice(0, 3);
+            var more = keyArr(e).length - ks.length;
+            var h = '<div class="world_entry' + (t === 'off' ? ' off' : '') + (open ? ' open' : '') + (sel ? ' sel' : '')
+                  + '" data-uid="' + e.uid + '">';
+
+            h += '<div class="ehead" data-act="expand" data-uid="' + e.uid + '">';
+            if (batch) {
+                h += '<span class="lamp" style="background:' + (sel ? 'var(--gold)' : 'var(--line3)') + ';box-shadow:none"></span>';
+            } else {
+                h += '<span class="dh">' + SV.drag + '</span>';
+                h += '<span class="lamp" data-act="kill" data-uid="' + e.uid + '" title="点一下启用 / 停用"></span>';
+            }
+            h += '<span class="et">' + (e.comment ? hl(e.comment, q) : '<span class="none">无标题</span>') + '</span>';
+            if (t === 'always') h += '<span class="kbadge" title="常驻：不用关键词，一直生效">常驻</span>';
+            else if (t === 'vec') h += '<span class="kbadge" title="向量化">向量</span>';
+            else if (t === 'key') h += '<span class="kbadge kicon" title="' + keyArr(e).length + ' 个关键词">' + SV.key + (keyArr(e).length || '') + '</span>';
+            h += '<span class="tok">' + ktok(tokOf(clen(e))) + '</span>';
+            if (!batch) h += '<span class="cv">' + SV.down + '</span>';
+            h += '</div>';
+
+            if (!open && keyArr(e).length) {
+                h += '<div class="ekey">' + ks.map(function (k) { return '<span class="kchip">' + hl(k, q) + '</span>'; }).join('')
+                  + (more > 0 ? '<span class="kchip more">+' + more + '</span>' : '') + '</div>';
+            }
+
+            if (open) h += '<div class="eedit">' + editPane(e) + '</div>';
+            h += '</div>';
+            return h;
+        }
+
+        function keyEditor(e, field, ph) {
+            var arr = (e[field] || []);
+            var h = '<div class="kedit" data-kf="' + field + '" data-uid="' + e.uid + '">';
+            h += arr.map(function (k, i) {
+                return '<span class="kw">' + esc(k) + '<i data-kdel="' + i + '">×</i></span>';
+            }).join('');
+            h += '<input placeholder="' + ph + '">';
+            h += '</div>';
+            return h;
+        }
+
+        function editPane(e) {
+            var h = '';
+
+            h += '<div class="fld"><label>标题 / 备注</label>'
+              + '<input class="ti" type="text" data-f="comment" data-uid="' + e.uid + '" placeholder="'
+              + escA(keyArr(e).slice(0, 3).join(', ') || '给这条起个名字') + '" value="' + escA(e.comment) + '">'
+              + '</div>';
+
+            h += '<div class="fld"><label>正文内容<span class="r">' + fmt(tokOf(clen(e))) + ' tok</span></label>'
+              + '<textarea class="ta content" data-f="content" data-uid="' + e.uid + '" placeholder="这段内容会原样发给 AI">'
+              + esc(e.content || '') + '</textarea>'
+              + '</div>';
+
+            h += '<div class="fld"><label>触发档位</label>' + triBtns(e, true) + '</div>';
+
+            h += '<div class="fld"><label>主关键词<span class="r">' + keyArr(e).length + ' 个</span></label>'
+              + keyEditor(e, 'key', '逗号或回车分隔')
+              + '<div class="mini">命中任一关键词才触发（常驻条目不用填）</div></div>';
+
+            h += '<div class="fld"><label>可选过滤<span class="r">' + secArr(e).length + ' 个</span></label>'
+              + keyEditor(e, 'keysecondary', '不填则忽略')
+              + '</div>';
+
+            h += '<div class="grid4">'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">插入位置</label>'
+              + '<select class="ts" data-f="position" data-uid="' + e.uid + '">'
+              + POS.map(function (p) {
+                  return '<option value="' + p[0] + '"' + (num(e.position) === p[0] ? ' selected' : '') + '>' + p[1] + '</option>';
+              }).join('')
+              + '</select></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">深度</label>'
+              + '<input class="ti" type="number" min="0" max="9999" value="' + num(e.depth, 4) + '" data-f="depth" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">Order</label>'
+              + '<input class="ti" type="number" min="0" max="9999" value="' + num(e.order, 100) + '" data-f="order" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">触发%</label>'
+              + '<input class="ti" type="number" min="0" max="100" value="' + num(e.probability, 100) + '" data-f="probability" data-uid="' + e.uid + '"></div>'
+              + '</div>';
+
+            h += '<div class="grid2" style="margin-top:9px">'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">包含组</label>'
+              + '<input class="ti" type="text" placeholder="同组只激活一条" value="' + escA(e.group || '') + '" data-f="group" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">组权重</label>'
+              + '<input class="ti" type="number" min="1" value="' + num(e.groupWeight, 100) + '" data-f="groupWeight" data-uid="' + e.uid + '"></div>'
+              + '</div>';
+
+            h += '<div class="grid3" style="margin-top:9px">'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">Sticky 条数</label>'
+              + '<input class="ti" type="number" min="0" placeholder="无" value="' + (e.sticky == null ? '' : e.sticky) + '" data-f="sticky" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">Cooldown</label>'
+              + '<input class="ti" type="number" min="0" placeholder="无" value="' + (e.cooldown == null ? '' : e.cooldown) + '" data-f="cooldown" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">Delay</label>'
+              + '<input class="ti" type="number" min="0" placeholder="无" value="' + (e.delay == null ? '' : e.delay) + '" data-f="delay" data-uid="' + e.uid + '"></div>'
+              + '</div>';
+
+            /* 高级 */
+            var ao = !!advOpen[e.uid];
+            h += '<div class="adv' + (ao ? ' open' : '') + '">'
+              + '<div class="advh" data-act="adv" data-uid="' + e.uid + '">' + SV.chev + '高级设置</div>'
+              + '<div class="advb">'
+              + '<div class="fld"><label>关键词逻辑</label>'
+              + '<select class="ts" data-f="selectiveLogic" data-uid="' + e.uid + '">'
+              + LOGIC.map(function (l) {
+                  return '<option value="' + l[0] + '"' + (num(e.selectiveLogic) === l[0] ? ' selected' : '') + '>' + l[1] + ' · ' + l[2] + '</option>';
+              }).join('')
+              + '</select></div>'
+              + '<div class="grid2">'
+              + ckField(e, 'selective', '选择性（要关键词才触发）')
+              + ckField(e, 'useProbability', '启用触发概率')
+              + ckField(e, 'vectorized', '向量化')
+              + ckField(e, 'excludeRecursion', '不被递归激活')
+              + ckField(e, 'preventRecursion', '不激活其它条目')
+              + ckField(e, 'ignoreBudget', '忽略预算')
+              + ckField(e, 'groupOverride', '组内优先')
+              + ckField(e, 'addMemo', '显示为备忘')
+              + '</div>'
+              + '<div class="grid2" style="margin-top:8px">'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">扫描深度（覆盖全局）</label>'
+              + '<input class="ti" type="number" placeholder="用全局" value="' + (e.scanDepth == null ? '' : e.scanDepth) + '" data-f="scanDepth" data-uid="' + e.uid + '"></div>'
+              + '<div><label style="display:block;font-size:10.5px;color:var(--ink3);margin-bottom:3px">Outlet 名称</label>'
+              + '<input class="ti" type="text" placeholder="无" value="' + escA(e.outletName || '') + '" data-f="outletName" data-uid="' + e.uid + '"></div>'
+              + '</div>'
+              + '<div class="fld" style="margin-top:9px"><label>附加匹配源</label>'
+              + '<div class="grid2">'
+              + ckField(e, 'matchCharacterDescription', '角色描述')
+              + ckField(e, 'matchCharacterPersonality', '角色性格')
+              + ckField(e, 'matchScenario', '场景')
+              + ckField(e, 'matchPersonaDescription', '用户人设')
+              + ckField(e, 'matchCreatorNotes', '作者注释')
+              + ckField(e, 'matchCharacterDepthPrompt', '深度提示')
+              + '</div></div>'
+              + '<div class="kv" style="margin-top:8px"><span>UID <b>' + e.uid + '</b></span>'
+              + '<span>字符 <b>' + fmt(clen(e)) + '</b></span>'
+              + '<span>角色 <b>' + (e.role == null ? '—' : (e.role === 0 ? '系统' : e.role === 1 ? '用户' : 'AI')) + '</b></span></div>'
+              + '</div></div>';
+
+            h += '<div class="eact">'
+              + '<button class="bt" data-act="dup" data-uid="' + e.uid + '">' + SV.copy + '副本</button>'
+              + '<button class="bt danger" data-act="del" data-uid="' + e.uid + '">' + SV.trash + '删除</button>'
+              + '<span class="grow"></span>'
+              + '<button class="bt done" data-act="collapse" data-uid="' + e.uid + '">' + SV.check + '收起</button>'
+              + '</div>';
+
+            return h;
+        }
+
+        function ckField(e, field, label) {
+            return '<label class="ck"><input type="checkbox" data-f="' + field + '" data-uid="' + e.uid + '"'
+                 + (e[field] ? ' checked' : '') + '>' + label + '</label>';
+        }
+
+        /* 书页顶部的统计块：单独成函数是为了增量渲染时能只换这一块 */
+        function bookHeadHTML(b, s) {
+            s = s || bstat(b);
+            var h = '<div class="bhead">'
+              + '<div class="bh2"><span>共 <b>' + s.tot + '</b> 条</span>'
+              + '<span>启用 <b>' + s.on + '</b></span>'
+              + '<span>常驻 <b>' + s.always + '</b></span>'
+              + '<span>约 <b>' + ktok(s.tok) + '</b> tok</span>'
+              + '<span class="grow"></span>'
+              + '<span class="sw' + (b.on ? ' on' : '') + '" data-act="tbook" data-name="' + escA(b.name) + '" title="整本启用 / 停用"></span>'
+              + '</div>'
+              + '<div class="bar">'
+              + '<span class="s1" style="width:' + (s.tot ? s.always / s.tot * 100 : 0) + '%"></span>'
+              + '<span class="s2" style="width:' + (s.tot ? s.key / s.tot * 100 : 0) + '%"></span>'
+              + '<span class="s3" style="width:' + (s.tot ? s.off / s.tot * 100 : 0) + '%"></span>'
+              + '</div>'
+              + '</div>';
+
+            if (!b.on) {
+                h += '<div class="warn">' + SV.warn + '<span><b>整本书没有启用</b>，下面怎么改都不会生效。点右上角开关打开它。</span></div>';
+            }
+            return h;
+        }
+
+        function fbarHTML(s) {
+            return '<div class="fbar">'
+              + fchip('all', '全部', s.tot)
+              + fchip('always', '常驻', s.always)
+              + fchip('key', '关键词', s.key)
+              + fchip('off', '禁用', s.off)
+              + '<span class="grow" style="flex:1"></span>'
+              + '<span class="chip" data-act="newent" style="height:25px">' + SV.plus + '新建条目</span>'
+              + '</div>';
+        }
+
+        function viewBook() {
+            var b = findBook(curName);
+            if (!b) { view = 'list'; renderBody(); return; }
+            var s = bstat(b);
+            var list = filteredEnts();
+
+            var h = bookHeadHTML(b, s) + fbarHTML(s);
+
+            h += '<div class="ents">';
+            if (!list.length) {
+                h += '<div class="empty">' + (q || fstate !== 'all' ? '这个筛选下没有条目' : '这本书还没有条目') + '</div>';
+            } else {
+                h += list.map(entRow).join('');
+            }
+            h += '</div>';
+
+            document.getElementById('mfWbBody').innerHTML = h;
+        }
+
+        function fchip(k, label, n) {
+            return '<span class="fchip' + (fstate === k ? ' on' : '') + '" data-act="fstate" data-k="' + k + '">'
+              + label + ' <span class="n">' + n + '</span></span>';
+        }
+
+        function renderBatch() {
+            var bb = document.getElementById('mfWbBatch');
+            if (!bb) return;
+            if (!batch || view !== 'book') { bb.className = 'batchbar'; bb.innerHTML = ''; return; }
+            var n = 0;
+            for (var k in selUid) if (selUid[k]) n++;
+            bb.className = 'batchbar on';
+            bb.innerHTML = '<span style="font-size:11.5px;color:var(--ink2)">已选 <b>' + n + '</b> 条</span>'
+              + '<span class="grow"></span>'
+              + '<button class="bt" data-act="bselall">全选</button>'
+              + '<button class="bt" data-act="benable">启用</button>'
+              + '<button class="bt" data-act="bdisable">禁用</button>'
+              + '<button class="bt danger" data-act="bdel">' + SV.trash + '</button>';
+        }
+
+        /* ── 渲染总入口 ───────────────────────────────────────────────────── */
+        function renderBody() {
+            if (!BOOKS.length) {
+                document.getElementById('mfWbHdr').innerHTML = '';
+                document.getElementById('mfWbSrow').innerHTML = '';
+                document.getElementById('mfWbBody').innerHTML =
+                    '<div class="mfld">正在读取世界书…<br><span style="font-size:11px">'
+                    + esc(stText || '第一次打开要拉一遍全部条目') + '</span></div>';
+                return;
+            }
+            renderHdr();
+            renderSrow();
+            if (view === 'book' && findBook(curName)) viewBook(); else viewList();
+            renderBatch();
+        }
+
+        function render() {
+            var sc = root ? root.scrollTop : 0;
+            renderBody();
+            if (root) root.scrollTop = sc;
+        }
+
+        /* ★★★ 增量渲染（2026-11-05 v2.0.2 性能）：
+           原来点开一条条目会走 render() → 整块 innerHTML 重画 149 条，
+           实测 125ms（冷）/ 30ms（热）。书越大越慢，500 条的书会明显卡。
+           现在只替换那一个 .world_entry 节点，顺手更新统计条的数字。
+           只用于「单条操作」：展开 / 收起 / 高级设置 / 启停。
+           筛选、排序、搜索、新建、删除这些会改变行集合的，仍然走全量 render()。 */
+        function renderOne(uid) {
+            var body = document.getElementById('mfWbBody');
+            if (!body) return;
+            var we = body.querySelector('.world_entry[data-uid="' + uid + '"]');
+            var e = entByUid(uid);
+            if (!we || !e) { render(); return; }        /* 找不到就退回全量，别赌 */
+
+            var tmp = document.createElement('div');
+            tmp.innerHTML = entRow(e);
+            var neu = tmp.firstElementChild;
+            if (!neu) { render(); return; }
+            we.replaceWith(neu);
+
+            /* 统计条和筛选条上的数字会变（启用条数、token 总量） */
+            var b = findBook(curName);
+            if (b) {
+                var s = bstat(b);
+                var hd = body.querySelector('.bhead');
+                if (hd) hd.outerHTML = bookHeadHTML(b, s);
+                var fb = body.querySelector('.fbar');
+                if (fb) fb.outerHTML = fbarHTML(s);
+            }
+        }
+
+        /* ── 书操作 ───────────────────────────────────────────────────────── */
+        /* 整本启用 / 停用 = 把这本书加进「全局世界书」多选（对所有聊天生效）。
+           ★ 匹配用书名（textContent），不是 option.value —— 原因见 globalOnSet 上面的注释。
+           ★ 改完必须走 jQuery 的 .val(...).trigger('change')：
+             ① 原生把 change 绑在 $('#world_info') 上，jQuery trigger 才会调到它；
+             ② select2 也监听 change，只 dispatch 原生事件的话，原生下拉里的标签不会更新，
+                下次调出原生面板会看到状态对不上。 */
+        function setBookOn(name, on) {
+            var sel = document.getElementById('world_info');
+            if (!sel) { setStatus('err', '找不到原生世界书下拉（#world_info）'); return false; }
+
+            var want = String(name).trim().toLowerCase();
+            var opts = [].slice.call(sel.options);
+            var idx = -1;
+            for (var i = 0; i < opts.length; i++) {
+                if (optName(opts[i]).toLowerCase() === want) { idx = i; break; }
+            }
+            if (idx < 0) {
+                console.warn('[mf-wb] 全局启用下拉里没有这本书：' + name,
+                    opts.map(optName));
+                setStatus('err', '全局启用下拉里没这本书：' + name);
+                return false;
+            }
+
+            opts[idx].selected = !!on;
+
+            /* 把当前所有选中项按 value（索引）收集起来交给 jQuery */
+            var vals = [];
+            opts.forEach(function (o, k) {
+                if (o.selected) vals.push(o.value !== '' ? o.value : String(k));
+            });
+
+            var $ = window.jQuery;
+            if ($ && $(sel).length) {
+                $(sel).val(vals).trigger('change');
+            } else {
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            var b = findBook(name);
+            if (b) b.on = !!on;
+            return true;
+        }
+
+        function createBook() {
+            var name = prompt('新建世界书，输入名字：', '新世界书 ' + new Date().toLocaleDateString('zh-CN'));
+            if (!name) return;
+            name = name.trim();
+            if (!name) return;
+            if (findBook(name)) { alert('已经有同名世界书了'); return; }
+
+            var ctx = getCtx();
+            var p = (ctx && ctx.saveWorldInfo)
+                ? Promise.resolve(ctx.saveWorldInfo(name, { entries: {} }, true))
+                : apiPost('/api/worldinfo/edit', { name: name, data: { entries: {} } });
+
+            setStatus('on', '正在新建…');
+            p.then(function () {
+                return (ctx && ctx.updateWorldInfoList) ? ctx.updateWorldInfoList() : null;
+            }).then(function () {
+                /* ★ 不重新 loadAll：updateWorldInfoList 之后原生下拉已更新，
+                     但再从后端拉一遍有延迟（而且新空书可能还没进 world_names）。
+                     直接在本地落一条空书，立刻进得去；下一次重开面板会自然对齐。 */
+                if (!findBook(name)) {
+                    BOOKS.push({ name: name, on: false, pinned: pinnedOf(name), data: { entries: {} } });
+                    BOOKS.sort(function (a, b) { return a.pinned === b.pinned ? (a.name > b.name ? 1 : -1) : (a.pinned ? -1 : 1); });
+                }
+                setStatus('ok', '已新建「' + name + '」');
+                view = 'book'; curName = name; q = ''; fstate = 'all'; openUid = {}; selUid = {}; batch = false;
+                retitle(); render();
+                if (root) root.scrollTop = 0;
+            }).catch(function (e) {
+                setStatus('err', '新建失败：' + (e && e.message ? e.message : e));
+            });
+        }
+
+        function deleteBook(name) {
+            var b = findBook(name);
+            if (!b) return;
+            if (!confirm('删除整本世界书「' + name + '」？\n\n里面 ' + entList(b).length + ' 条会一起没，不可撤销。')) return;
+
+            setStatus('on', '正在删除…');
+            apiPost('/api/worldinfo/delete', { name: name }).then(function () {
+                var ctx = getCtx();
+                return (ctx && ctx.updateWorldInfoList) ? ctx.updateWorldInfoList() : null;
+            }).then(function () {
+                /* 本地也摘掉，不用等重读 */
+                BOOKS = BOOKS.filter(function (x) { return x.name !== name; });
+                if (curName === name) { view = 'list'; curName = null; }
+                setStatus('ok', '已删除「' + name + '」');
+                render();
+                loadAll(true).catch(function () { });
+            }).catch(function (e) {
+                setStatus('err', '删除失败：' + (e && e.message ? e.message : e));
+            });
+        }
+
+        /* 导出本书：自己造 Blob 下载，不走原生按钮
+           ★ 为什么不点原生 #world_popup_export：它导的是 #world_editor_select 里当前选中的书，
+             而我们的面板切书时不同步那个下拉 → 会导出错的书。 */
+        function exportBook(name) {
+            var b = findBook(name || curName);
+            if (!b) return;
+            try {
+                var blob = new Blob([JSON.stringify(b.data, null, 2)], { type: 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = (b.name || 'worldbook') + '.json';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1200);
+                setStatus('ok', '已导出「' + b.name + '」');
+            } catch (e) {
+                setStatus('err', '导出失败：' + (e && e.message ? e.message : e));
+            }
+        }
+
+        /* 临时切回原生面板：改名 / 导入 / 排序这些没做的功能，从这里进原生去做。
+           刷新酒馆就恢复我们的面板。 */
+        function useNative() {
+            wi.classList.remove('mf-wb-on');
+            root.style.display = 'none';
+            alert('已切回原生世界书面板。\n\n改名 / 导入 / 应用排序请在这里做；\n刷新酒馆（Ctrl+R）后会回到新版面板。');
+        }
+
+        /* ── 条目操作 ─────────────────────────────────────────────────────── */
+        function maxUid(b) {
+            var m = -1;
+            entList(b).forEach(function (e) { if (num(e.uid) > m) m = num(e.uid); });
+            return m;
+        }
+
+        function newEntryInBook() {
+            var b = findBook(curName);
+            if (!b) return;
+            var uid = maxUid(b) + 1;
+            var e = newEntry(uid);
+            b.data.entries[uid] = e;
+            openUid[uid] = true;
+            fstate = 'all'; q = '';
+            touch(b.name);
+            render();
+            var el = document.querySelector('#mfWb .world_entry[data-uid="' + uid + '"] input[data-f="comment"]');
+            if (el) { el.focus(); el.scrollIntoView({ block: 'center' }); }
+        }
+
+        function dupEntry(uid) {
+            var b = findBook(curName);
+            var src = entByUid(uid);
+            if (!b || !src) return;
+            var c = JSON.parse(JSON.stringify(src));
+            c.uid = maxUid(b) + 1;
+            c.comment = (src.comment || '') + ' (副本)';
+            b.data.entries[c.uid] = c;
+            openUid[c.uid] = true;
+            touch(b.name);
+            render();
+        }
+
+        function delEntry(uid) {
+            var b = findBook(curName);
+            var e = entByUid(uid);
+            if (!b || !e) return;
+            if (!confirm('删除「' + (e.comment || '无标题') + '」？不可撤销。')) return;
+            delete b.data.entries[uid];
+            delete openUid[uid];
+            delete selUid[uid];
+            touch(b.name);
+            render();
+        }
+
+        /* ── 事件：点击 ───────────────────────────────────────────────────── */
+        function onClick(ev) {
+            var t = ev.target.closest('[data-act]');
+            var kd = ev.target.closest('[data-kdel]');
+
+            /* 删关键词 */
+            if (kd) {
+                var box = kd.closest('.kedit');
+                if (!box) return;
+                var el0 = entByUid(+box.dataset.uid);
+                var f0 = box.dataset.kf;
+                if (!el0) return;
+                var arr = (el0[f0] || []).slice();
+                arr.splice(+kd.dataset.kdel, 1);
+                el0[f0] = arr;
+                touch(curName);
+                render();
+                return;
+            }
+
+            if (!t) return;
+            var act = t.dataset.act;
+
+            if (act === 'open') {
+                var b = findBook(t.dataset.name);
+                if (b) {
+                    view = 'book'; curName = b.name; q = ''; fstate = 'all';
+                    openUid = {}; selUid = {}; batch = false; retitle(); render();
+                    if (root) root.scrollTop = 0;
+                }
+                return;
+            }
+            if (act === 'jump') {
+                var b2 = findBook(t.dataset.name);
+                if (b2) {
+                    view = 'book'; curName = b2.name; fstate = 'all';
+                    openUid = {}; openUid[+t.dataset.uid] = true; selUid = {}; batch = false;
+                    q = ''; retitle(); render();
+                }
+                return;
+            }
+            if (act === 'back') {
+                view = 'list'; curName = null; q = ''; batch = false; selUid = {}; openUid = {};
+                retitle(); render();
+                if (root) root.scrollTop = 0;
+                return;
+            }
+            if (act === 'pin') {
+                var bp = findBook(t.dataset.name);
+                if (bp) { setPin(bp.name, !bp.pinned); render(); }
+                ev.stopPropagation();
+                return;
+            }
+            if (act === 'tbook') {
+                var bt = findBook(t.dataset.name);
+                if (bt) {
+                    var okOn = setBookOn(bt.name, !bt.on);
+                    if (okOn) setStatus('ok', (bt.on ? '已启用「' : '已停用「') + bt.name + '」');
+                    render();
+                }
+                ev.stopPropagation();
+                return;
+            }
+            if (act === 'expand') {
+                var uid = +t.dataset.uid;
+                if (batch) { selUid[uid] = !selUid[uid]; render(); return; }
+                openUid[uid] = !openUid[uid];
+                renderOne(uid);          /* 只重画这一条，不碰其余 148 条 */
+                return;
+            }
+            if (act === 'kill') {
+                var ke = entByUid(+t.dataset.uid);
+                if (ke) { ke.disable = !ke.disable; touch(curName); renderOne(ke.uid); }
+                ev.stopPropagation();
+                return;
+            }
+            if (act === 'collapse') {
+                var cu = +t.dataset.uid;
+                openUid[cu] = false; renderOne(cu); return;
+            }
+            if (act === 'adv') {
+                var au = +t.dataset.uid;
+                advOpen[au] = !advOpen[au]; renderOne(au); return;
+            }
+            if (act === 'fstate') { fstate = t.dataset.k; render(); return; }
+            if (act === 'clrq') { q = ''; render(); return; }
+            if (act === 'gset') { gsetOpen = !gsetOpen; render(); return; }
+            if (act === 'newbook') { createBook(); return; }
+            if (act === 'delbook') { closeMore(); deleteBook(curName); return; }
+            if (act === 'more') {
+                var mm = document.getElementById('mfWbMore');
+                if (mm) mm.classList.toggle('on');
+                ev.stopPropagation();
+                return;
+            }
+            if (act === 'export') { closeMore(); exportBook(curName); return; }
+            if (act === 'native') { closeMore(); useNative(); return; }
+            if (act === 'newent') { newEntryInBook(); return; }
+            if (act === 'dup') { dupEntry(+t.dataset.uid); return; }
+            if (act === 'del') { delEntry(+t.dataset.uid); return; }
+
+            if (act === 'batch') { batch = !batch; selUid = {}; render(); return; }
+            if (act === 'bselall') {
+                filteredEnts().forEach(function (e) { selUid[e.uid] = true; });
+                render(); return;
+            }
+            if (act === 'benable' || act === 'bdisable') {
+                var on = act === 'benable';
+                var b3 = findBook(curName);
+                if (!b3) return;
+                var cnt = 0;
+                for (var u in selUid) {
+                    if (!selUid[u]) continue;
+                    var ee = b3.data.entries[u];
+                    if (ee) { ee.disable = !on; cnt++; }
+                }
+                if (cnt) touch(curName);
+                render();
+                return;
+            }
+            if (act === 'bdel') {
+                var b4 = findBook(curName);
+                if (!b4) return;
+                var n = 0;
+                for (var u2 in selUid) if (selUid[u2]) n++;
+                if (!n) return;
+                if (!confirm('删除选中的 ' + n + ' 条？不可撤销。')) return;
+                for (var u3 in selUid) if (selUid[u3]) delete b4.data.entries[u3];
+                selUid = {}; batch = false;
+                touch(curName);
+                render();
+                return;
+            }
+        }
+
+        function closeMore() {
+            var mm = document.getElementById('mfWbMore');
+            if (mm) mm.classList.remove('on');
+        }
+        document.addEventListener('click', function (ev) {
+            var mm = document.getElementById('mfWbMore');
+            if (!mm || !mm.classList.contains('on')) return;
+            if (ev.target.closest && ev.target.closest('.morewrap')) return;
+            mm.classList.remove('on');
+        });
+
+        /* ── 事件：三档 ───────────────────────────────────────────────────── */
+        function onTri(ev) {
+            var btn = ev.target.closest('.tri button');
+            if (!btn) return;
+            ev.stopPropagation();
+            var we = btn.closest('.world_entry');
+            if (!we) return;
+            var e = entByUid(+we.dataset.uid);
+            if (!e) return;
+            var tr = btn.dataset.tr;
+            if (tr === 'off') e.disable = true;
+            else if (tr === 'always') { e.disable = false; e.constant = true; e.vectorized = false; }
+            else { e.disable = false; e.constant = false; e.vectorized = false; }
+            touch(curName);
+            render();
+        }
+
+        /* ── 事件：输入（只改内存，不重渲染） ─────────────────────────────── */
+        function onInput(ev) {
+            var el = ev.target;
+            var f = el.dataset.f;
+            if (!f) return;
+            var we = el.closest('.world_entry');
+            if (!we) return;
+            var e = entByUid(+we.dataset.uid);
+            if (!e) return;
+
+            var numFields = ['depth', 'order', 'probability', 'groupWeight'];
+            var nulFields = ['sticky', 'cooldown', 'delay', 'scanDepth'];
+
+            if (numFields.indexOf(f) >= 0) { e[f] = Number(el.value) || 0; touch(curName); return; }
+            if (nulFields.indexOf(f) >= 0) { e[f] = N(el.value); touch(curName); return; }
+
+            if (f === 'comment') {
+                e.comment = el.value;
+                var et = we.querySelector('.ehead .et');
+                if (et) et.textContent = el.value || '无标题';
+                touch(curName);
+                return;
+            }
+            if (f === 'group') { e.group = el.value; touch(curName); return; }
+            if (f === 'outletName') { e.outletName = el.value; touch(curName); return; }
+            if (f === 'content') {
+                e.content = el.value;
+                var lr = we.querySelector('.fld .r');
+                if (lr) lr.textContent = fmt(tokOf(e.content.length)) + ' tok';
+                var tk = we.querySelector('.tok');
+                if (tk) tk.textContent = ktok(tokOf(e.content.length));
+                touch(curName);
+                return;
+            }
+            if (f === 'position') { e.position = Number(el.value); touch(curName); return; }
+            if (f === 'selectiveLogic') { e.selectiveLogic = Number(el.value); touch(curName); return; }
+
+            /* 复选 */
+            if (el.type === 'checkbox') {
+                e[f] = !!el.checked;
+                if (f === 'vectorized' && el.checked) e.constant = false;
+                touch(curName);
+                /* 向量化会改档位徽标，需要重渲染 */
+                if (f === 'vectorized') render();
+                return;
+            }
+        }
+
+        /* ── 事件：关键词输入框 ───────────────────────────────────────────── */
+        function onKey(ev) {
+            var inp = ev.target;
+            if (!inp.closest || !inp.closest('.kedit')) return;
+            var box = inp.closest('.kedit');
+            var e = entByUid(+box.dataset.uid);
+            if (!e) return;
+            var f = box.dataset.kf;
+
+            function add(v) {
+                v = String(v || '').trim().replace(/,$/, '');
+                if (!v) return;
+                var arr = (e[f] || []).slice();
+                v.split(/[,，]/).forEach(function (x) {
+                    x = x.trim();
+                    if (x && arr.indexOf(x) < 0) arr.push(x);
+                });
+                e[f] = arr;
+                touch(curName);
+                render();
+                var nb = document.querySelector('#mfWb .kedit[data-uid="' + e.uid + '"][data-kf="' + f + '"] input');
+                if (nb) nb.focus();
+            }
+
+            if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); add(inp.value); return; }
+            if (ev.key === 'Backspace' && !inp.value) {
+                var a = (e[f] || []).slice();
+                if (a.length) { a.pop(); e[f] = a; touch(curName); render(); }
+            }
+        }
+
+        function onBlur(ev) {
+            var inp = ev.target;
+            if (!inp.closest || !inp.closest('.kedit')) return;
+            var box = inp.closest('.kedit');
+            var e = entByUid(+box.dataset.uid);
+            if (!e || !inp.value.trim()) return;
+            var f = box.dataset.kf;
+            var arr = (e[f] || []).slice();
+            inp.value.split(/[,，]/).forEach(function (x) {
+                x = x.trim();
+                if (x && arr.indexOf(x) < 0) arr.push(x);
+            });
+            e[f] = arr;
+            touch(curName);
+            render();
+        }
+
+        /* ── 组装 DOM ─────────────────────────────────────────────────────── */
+        var root = document.createElement('div');
+        root.id = 'mfWb';
+        root.innerHTML =
+            '<div class="wrap">'
+          + '<div id="mfWbHdr"></div>'
+          + '<div id="mfWbSrow"></div>'
+          + '<div id="mfWbSt" class="svst"></div>'
+          + '<div id="mfWbBody"></div>'
+          + '<div class="batchbar" id="mfWbBatch"></div>'
+          + '</div>';
+
+        wi.appendChild(root);
+        wi.classList.add('mf-wb-on');
+
+        /* 抽屉标题改成自己的（原生 title 是 "World Info"）
+           ★ mfOrig 必须存「世界书」而不是原生英文：retitle() 返回一级页时会恢复 mfOrig，
+             存英文的话每次返回都会变回 "World Info"（踩过）。 */
+        var titleEl = wi.querySelector('#WorldInfoheader h3 span');
+        if (titleEl) {
+            titleEl.dataset.mfOrig = '世界书';
+            titleEl.textContent = '世界书';
+        }
+
+        function retitle() {
+            /* 抽屉头永远「世界书」：书页的书名由面板自己的顶栏（← 书名）承担，
+               两边都写书名会重复。 */
+            if (!titleEl) return;
+            titleEl.textContent = '世界书';
+        }
+
+        root.addEventListener('click', onClick);
+        root.addEventListener('click', onTri);
+        root.addEventListener('input', onInput);
+        root.addEventListener('change', onInput);
+        root.addEventListener('keydown', onKey);
+        root.addEventListener('blur', onBlur, true);
+        root.addEventListener('scroll', function () { lastScroll = root.scrollTop; });
+
+        /* 全局设置面板的写入：只处理带 data-g 的那个控件 */
+        root.addEventListener('change', function (ev) {
+            var el = ev.target;
+            if (!el.dataset || !el.dataset.g) return;
+            writeOne(el.dataset.g);
+        });
+        root.addEventListener('input', function (ev) {
+            var el = ev.target;
+            if (!el.dataset || !el.dataset.g) return;
+            writeOne(el.dataset.g);
+        });
+
+        /* 原生那边全局启用的书变了（比如切角色卡自动加书）→ 刷新我们的 on 标记
+           ★ 用委托而不要直接绑在 #world_info 上：updateWorldInfoList() 会 empty + 重建选项，
+             一旦原生把 select 元素整个换掉，直接绑的监听就永久失效了（踩过）。 */
+        var holderEl = wi.querySelector('#wi-holder');
+        if (holderEl) {
+            holderEl.addEventListener('change', function (ev) {
+                if (!ev.target || ev.target.id !== 'world_info') return;
+                var onSet = globalOnSet();
+                BOOKS.forEach(function (b) { b.on = !!onSet[b.name]; });
+                if (view === 'list') render();
+            });
+        }
+
+        /* ── 启动 ─────────────────────────────────────────────────────────── */
+        function start() {
+            renderBody();
+            loadAll(false).then(function () { render(); }).catch(function () { render(); });
+        }
+
+        /* 抽屉打开时才拉数据（关着拉没意义，还拖慢启动） */
+        var pre = function () {
+            if (wi.classList.contains('closedDrawer')) return;
+            if (BOOKS.length && (Date.now() - LOADED_AT) < 60000) return;
+            loadAll(false).then(function () { render(); }).catch(function () { });
+        };
+        new MutationObserver(pre).observe(wi, { attributes: true, attributeFilter: ['class'] });
+        setTimeout(start, 1200);
+    }
+
+    /* ★ 自启动：线上 boot() 里也会调一次，重复进来会被 wi.dataset.mfWb 挡掉。
+         本地预览页没有 boot，全靠这一句。 */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { initWorldPanel(0); });
+    } else {
+        initWorldPanel(0);
+    }
+
+
     function boot() {
         APP.modules.styleGuard = true;
         initStyleGuard();
@@ -2423,6 +5323,13 @@
 
         APP.modules.topbar = true;
         initTopbar();
+
+        APP.modules.apiPanel = true;
+        initApiPanel();
+
+        /* 旧的跨书搜索栏被全功能面板取代；函数保留在上面，回滚只需把这两行换回去 */
+        APP.modules.worldPanel = true;
+        initWorldPanel();
 
         console.log(LOG, '扩展已启动，模块：', Object.keys(APP.modules).join(', '));
     }
