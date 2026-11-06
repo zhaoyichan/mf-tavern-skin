@@ -271,6 +271,21 @@ body   { background-image: none !important; }
   color: var(--mf-ink) !important;
   padding-top: 0 !important;
   padding-bottom: 2px !important;
+  /* ★★ 2026-11-06 修「正文整体偏左、右边多一截空白」（用户看手机截图指出）：
+     原生 st_style.css:1527-1532 是
+       .mes_text { padding-left:0; padding-right: var(--mes-right-spacing) }
+     --mes-right-spacing: 30px（st_style.css:120）。这 30px 原本给头像 /
+     消息操作按钮留位；本扩展 4.2 已把 .mesAvatarWrapper 整个 display:none，
+     那块位置就再没人用，于是每条消息右侧恒定多一块空白。
+     旧版这里只覆盖了 padding-top / padding-bottom，**漏了 padding-right**。
+     ★ 实测（864×1920 手机截图）：左留白 93px(10.8%)、右留白 188px(21.8%)，
+       右多 95px；逐行右边界稳定在 x=650~684，说明是固定空白而非中文换行参差。
+     ★ 用户拍板：「全局归零、只求对称、其它不动」→ 只补这一行，
+       --mf-read-pad 留白滑块、字号、行高、用户消息左竖线一律不碰。
+     ★ 排除过的嫌疑（别往错处改）：#chat 左右 padding 都是 0；
+       .mes 是 margin:1px auto 居中且 width=100%-2×留白（左右对称）；
+       ST 1.18 / 1.19 这条原生规则完全相同 → 与 2.4.0 升级无关。 */
+  padding-right: 0 !important;
 }
 .mes_text p { margin: 0.5em 0; }
 .mes_text p:first-child { margin-top: 0; }
@@ -371,6 +386,27 @@ body   { background-image: none !important; }
   color: var(--mf-accent-deep) !important;
 }
 #token_counter { color: var(--mf-ink3) !important; }
+
+/* ── 6.05 输入框：彻底去掉「▶继续 / ⏸暂停」两颗（2026-11-06，用户拍板）──
+   ★ 口径（用户从四个选项里选的）：**手机 + 桌面两端都彻底隐藏**，
+     不是「只在手机隐藏」，也不是「只恢复原生行为」。
+     所以这里写成全局规则、不带任何 @media，且必须 !important。
+   ★ 关键数据 / 踩坑（别改成别的选择器）：
+     · ST 1.18.0 与 1.19.0 的 index.html 里，这两个的真实 id 是
+       #stscript_continue / #stscript_pause；第三颗 #stscript_stop 保留不动。
+       它们都带 class="stscript_btn stscript_continue / stscript_pause"。
+     · 原生 CSS（st_style.css:1015/1020-1028）本来是
+       `.stscript_btn { display: none }`，只在 body 处于脚本执行/暂停态时
+       才把 pause / stop / continue 放成 flex。也就是「平时不该出现」。
+     · 但 TauriTavern 2.4.0 手机端（2026-11-05 真机截图）把 ▶⏸⏹ 三颗
+       全部常驻显示在输入行里 —— 这是手机端自己的样式把 display:none 冲掉了，
+       不是脚本真的在跑。所以靠「恢复原生」修不好，只能显式钉死。
+     · 用 id 而不是 .stscript_btn：class 会连 #stscript_stop 一起杀掉，
+       用户只勾了 ▶继续 + ⏸暂停，⏹停止要留。
+   ★ 为什么写在第 6 节里、不写到文件末尾：同节就近，以后改输入栏时一眼能看到。
+   ★ 本轮只改本地桌面这份，未推 GitHub；手机要生效需后续发版 + 手机更新扩展。 */
+#stscript_continue,
+#stscript_pause { display: none !important; }
 
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1674,24 +1710,32 @@ body.mf-tb-js .mf-tb-tgi > svg {
 }
 body:not(.mf-tb-js) .mf-tb-tg { display: none !important; }
 
-/* ── 11.5b 展开态也让正文顶上去（v1.9.0）─────────────────────────────
+/* ── 11.5b 展开态也让正文顶上去（v1.9.0；2026-11-06 放宽到全设备）────
    用户要的是「沉浸式」：正文铺满整屏，胶囊像一片浮在纸上的玻璃，
-   **只有胶囊盖住的那块会挡字**，其余地方（尤其右边那 900px）全给正文用。
-   所以他原话是「展开的面积会挡着正文，但其他地方不会挡着正文」。
+   **只有胶囊盖住的那块会挡字**，其余地方全给正文用。
+   原话：「展开的面积会挡着正文，但其他地方不会挡着正文」。
 
    实现只要一条：把 --topBarBlockSize 归零。它与 11.6 折叠态用的是同一个
    开关（#sheld 的 top 和 height 都引用它），所以正文自然从 y=0 开始。
    配合 11.2 把 holder 改成 position:fixed，胶囊就不占流了。
 
-   ★ 为什么用媒体查询包起来、而不是全局归零：
-     手机/平板是「铺满整行」的形态（11.10），整条本来就要占满宽度，
-     正文必须从它下面开始 —— 浮上去的话胶囊会横着压住正文第一整行。
-     所以只在「宽屏 + 精细指针」下浮起来。
-     这也顺便避开了「要把酒馆原始 --topBarBlockSize 存一份」的麻烦：
-     手机端根本没覆盖过它，用的还是酒馆原值。 */
-@media (min-width: 769px) and (pointer: fine) {
-  body.mf-tb-js:not(.mf-tb-col) { --topBarBlockSize: 0px !important; }
-}
+   ★★ 2026-11-06 改口径（用户拍板「手机彻底照搬桌面靠左小胶囊」）：
+     原来这里包在 @media (min-width:769px) and (pointer:fine) 里，
+     手机端保留酒馆原值 --topBarBlockSize，走 11.10 的铺满通栏、正文从
+     顶栏下面开始。现在手机也用胶囊 + 正文铺满 y=0，所以**限定必须去掉**。
+   ★ 关键数据 / 踩坑（别改回按媒体查询归零）：
+     · ST 1.19.0 st_style.css:112-114：
+         --topBarBlockSize = 2 × --mainFontSize + --mainFontSize/3
+       手机上不是固定 44px，会随字号缩到 30 多 px；
+       而旧 11.10 把 .drawer-icon 写死 34px 且 holder 高就等于这个变量
+       → 图标溢出，横着压住聊天正文第一行。
+       这就是 2026-11-05 手机截图里「顶栏下面那行字只剩半截」的真根因，
+       不是 WebView 的 fixed 结算问题（早期判断有误，已更正）。
+     · 归零后 #sheld 的 top=0、height=100dvh，正文完整铺满；
+       胶囊 fixed 在 top:8px 浮在上面，和桌面完全一致。
+     · 11.11 的抽屉面板让位、11.12 的毛玻璃层也必须同步放宽到全设备，
+       否则手机归零后 .drawer-content 会从 y=0 盖住胶囊。 */
+body.mf-tb-js:not(.mf-tb-col) { --topBarBlockSize: 0px !important; }
 
 /* ── 11.6 折叠：整条收走，正文顶到屏幕最上面 ─────────────────────────
    ★ 这才是「收纳」的意思（v1.5.0 改的，之前只把九颗宽度收成 0，
@@ -2023,37 +2067,41 @@ body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !i
    修法：面板整体下移到胶囊下沿，胶囊永远露在外面、随时可点。
    top 是相对 holder 顶边算的（holder 在 top:8px），44 + 8 = 52，
    胶囊底边 48，留 4px 缝。 */
-@media (min-width: 769px) and (pointer: fine) {
-  body.mf-tb-js #top-settings-holder .drawer-content:not(.fillLeft):not(.fillRight) {
-    top: 44px !important;
-    max-height: calc(100dvh - 52px - var(--bottomFormBlockSize, 0px)) !important;
-  }
-
-  /* ★ v1.9.2 修正：左侧「预设」面板（#left-nav-panel，.fillLeft）和右侧面板
-     （.fillRight）是 position:fixed、靠自己 height:100% 撑满全高的，
-     不能跟普通抽屉用同一条规则 ——
-       ① 它们不在 holder 的坐标里，top 要按视口算（胶囊底边 48，给 52）；
-       ② 高度必须写 dvh，不能留给 100%（11.12 之后虽然已经相对视口，
-          但这里显式钉死更稳，免得以后又有人把滤镜加回胶囊）。
-     用户报的「全屏打开预设，变成右上角小小的一坨」就是这两个值一起塌掉：
-     高变 40（→min-height 100）、宽是 calc((100vw-sheldWidth)/2)=480。 */
-  body.mf-tb-js #top-settings-holder .drawer-content.fillLeft,
-  body.mf-tb-js #top-settings-holder .drawer-content.fillRight {
-    top: 52px !important;
-    height: calc(100dvh - 52px) !important;
-    max-height: calc(100dvh - 52px) !important;
-  }
-
-  /* 世界书 #WorldInfo 也是 position:fixed（st_style.css:5615 那组），
-     它自己的 top 是 44 —— 胶囊底边在 48，会压住 4px。一并挪到 52。
-     ★ 实测（1920×1080）：修完后 世界书 960×436 @ left 480 top 44，
-     只差这一处没对齐。 */
-  body.mf-tb-js #top-settings-holder #WorldInfo {
-    top: 52px !important;
-  }
+/* ★ 2026-11-06：原来这两组规则包在 @media (min-width:769px) and
+   (pointer:fine) 里；手机改成靠左胶囊 + 11.5b 归零全设备生效之后，
+   .drawer-content 会从 y=0 直接盖住胶囊，所以让位规则必须一起放宽。
+   已核对 ST 1.19.0：手机端没有单独覆盖 .fillLeft/.fillRight/#WorldInfo
+   的定位（st_style.css:5613-5657 是全设备共用的 fixed 规则），
+   数值可以沿用桌面，不必另写一套。 */
+body.mf-tb-js #top-settings-holder .drawer-content:not(.fillLeft):not(.fillRight) {
+  top: 44px !important;
+  max-height: calc(100dvh - 52px - var(--bottomFormBlockSize, 0px)) !important;
 }
 
-/* ── 11.12 玻璃模糊层（v1.9.2）────────────────────────────────────
+/* ★ v1.9.2 修正：左侧「预设」面板（#left-nav-panel，.fillLeft）和右侧面板
+   （.fillRight）是 position:fixed、靠自己 height:100% 撑满全高的，
+   不能跟普通抽屉用同一条规则 ——
+     ① 它们不在 holder 的坐标里，top 要按视口算（胶囊底边 48，给 52）；
+     ② 高度必须写 dvh，不能留给 100%（11.12 之后虽然已经相对视口，
+        但这里显式钉死更稳，免得以后又有人把滤镜加回胶囊）。
+   用户报的「全屏打开预设，变成右上角小小的一坨」就是这两个值一起塌掉：
+   高变 40（→min-height 100）、宽是 calc((100vw-sheldWidth)/2)=480。 */
+body.mf-tb-js #top-settings-holder .drawer-content.fillLeft,
+body.mf-tb-js #top-settings-holder .drawer-content.fillRight {
+  top: 52px !important;
+  height: calc(100dvh - 52px) !important;
+  max-height: calc(100dvh - 52px) !important;
+}
+
+/* 世界书 #WorldInfo 也是 position:fixed（st_style.css:5615 那组），
+   它自己的 top 是 44 —— 胶囊底边在 48，会压住 4px。一并挪到 52。
+   ★ 实测（1920×1080）：修完后 世界书 960×436 @ left 480 top 44，
+   只差这一处没对齐。 */
+body.mf-tb-js #top-settings-holder #WorldInfo {
+  top: 52px !important;
+}
+
+/* ── 11.12 玻璃模糊层（v1.9.2；2026-11-06 放宽到全设备）────────────
    为什么不直接给胶囊写 backdrop-filter：见 11.2 那段注释 ——
    它会把胶囊变成所有 position:fixed 后代的包含块，预设面板、
    右侧面板、世界书、浮动提示词会当场塌成一条。
@@ -2061,105 +2109,109 @@ body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !i
    透出来的仍是磨砂），但伪元素没有 fixed 后代，零副作用。
    z-index:-1 安全：胶囊自己是 stacking context（fixed + z-index:4000），
    -1 只沉到本层最底，不会掉到正文后面。
-   手机不生成（那边 11.10 已经把模糊关了，省 GPU）。 */
-@media (min-width: 769px) and (pointer: fine) {
-  body.mf-tb-js #top-settings-holder::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    z-index: -1;
-    -webkit-backdrop-filter: blur(16px) saturate(1.08);
-    backdrop-filter: blur(16px) saturate(1.08);
-  }
+
+   ★ 2026-11-06：原来只给桌面生成（手机 11.10 关模糊省 GPU）。
+     用户拍板「手机也彻底照搬桌面毛玻璃胶囊」，所以去掉媒体限定。
+     ⚠ 已知限制：极窄屏（<370px）下 11.10 会给 holder 加 overflow-x:auto，
+       Chrome 里滚动容器内的 backdrop-filter 可能退化成不模糊；
+       这是为了「图标可达」做的取舍，常见 390~430px 手机不受影响。
+     ★ 2026-11-06 headless 实测：390px / 320px 两档下
+       getComputedStyle(holder,'::before').backdropFilter 都返回
+       `blur(16px) saturate(1.08)`，规则确实生效；但计算样式不能证明
+       实际合成没退化，真机仍需目视确认毛玻璃质感。 */
+body.mf-tb-js #top-settings-holder::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+  backdrop-filter: blur(16px) saturate(1.08);
 }
 
-/* ── 11.10 手机 / 触屏：展开时铺满整条顶栏 ──────────────────────
-   ★ v1.8.0 这段又必须写回来 —— 桌面回到胶囊了，
-     「桌面胶囊 / 手机通栏」的形态翻转就又成了必需。
-     用户当时的原话一直没变：
-       「我试着小屏…也起码要把按键给铺满顶部吧」
+/* ── 11.10 手机 / 触屏：与桌面一致的靠左小胶囊（2026-11-06 重写）────
+   ★★ 旧版本是「手机铺满通栏」，来自 2026-11-04 用户当时的原话
+     「我试着小屏…也起码要把按键给铺满顶部吧」。
+     2026-11-06 用户看过手机安装截图后**明确推翻**这条，选了
+     「彻底照搬桌面靠左小胶囊」；同一轮还拍板：
+       · 正文铺满到 y=0（和桌面完全一样，胶囊浮在字上）
+       · 超窄屏照搬不缩图标，胶囊内横向滑动
+       · 毛玻璃模糊 + 折叠态一起照搬桌面
+     → 所以这一节**不再覆盖 11.2 的胶囊形态**，只补极窄屏的横向滑动。
+       要退回旧口径：把下面 @media(max-width:370px) 删掉，把 11.5b /
+       11.11 / 11.12 改回 @media (min-width:769px) and (pointer:fine)，
+       并从仓库旧版找回本节的「铺满通栏」规则。
 
-   为什么手机不能用胶囊：390px 的屏，一坨小图标挤在左边、
-   右边一大片空，难点也不像导航栏。
-   做法：holder 回到 100% 宽、去胶囊，九个 drawer 各 flex:1 均分，
-   图标在格子里居中 → 十颗均匀铺满整行，每格约 39px（拇指够得着）。
+   ★ 关键数据 / 踩坑（别再按旧思路写）：
+     · 十颗图标按桌面尺寸：9×34 + 折叠键34 + 内边距4 + 间隙 ≈ 344px，
+       加 left:10 → 约 354px。390~430px 手机完全放得下，不需要缩图标。
+     · 旧版在 <400px / <330px 把图标缩到 30/24px，是为了「均分整行」；
+       胶囊形态下没有格子可均分，缩了反而和桌面不一致 → 两段已删除。
+     · 11.10 旧版把 holder 写成 `position:relative` + `height:
+       var(--topBarBlockSize)`，而手机端该变量只有 30 多 px（见 11.5b），
+       34px 图标溢出横压正文第一行 —— 这就是截图里「半截字」的真根因。
+       现在 holder 由 11.2 统一成 fixed 浮层，不再有这个问题。
+     · 截图里左侧 / 右侧那几个圆形悬浮球压住正文，是**用户另装的插件**
+       自带的悬浮球，不属于本扩展（2026-11-06 用户明确「不用管」）。
+       不要在这里写任何规则去挪它们。
 
-   用 (pointer:coarse) 兜住平板 / 横屏手机：只看宽度会在平板上漏掉。 */
-@media (max-width: 768px), (pointer: coarse) {
+   ★ 折叠态：桌面 11.6 的 `body.mf-tb-js.mf-tb-col` 本来就是全局规则，
+     本节删掉旧的 24px / #sheld padding-top:26px 覆盖后，手机折叠后
+     自然和桌面走同一套规则。
+     ★★ 实测更正（2026-11-06 headless 验收，别再照注释里的旧数字改）：
+       那颗浮片**实际是 34px / opacity .70**，不是 11.6 注释写的
+       30px / .40 —— 11.3 的 `body.mf-tb-js #top-settings-holder
+       .drawer-icon` 带 ID，特异性高于 `body.mf-tb-js.mf-tb-col
+       .mf-tb-tgi`，所以 34/.70 会赢。桌面本来也是这样，属既有行为，
+       本轮不改（用户只要求「和桌面一样」）。
+     ⚠ 已知取舍（用户已选，不要自作主张补）：手机正文左右 padding 只有
+       十几像素、又铺满 y=0，折叠态左上角那颗浮片会压到第一行头几个字；
+       桌面是靠正文居中留白避开的。要完全避开就得偏离「和桌面一样」。
+   ★★ 2026-11-06 headless 实测的几何后果（重要，别只看规则就以为修好了）：
+     胶囊 10 颗图标在 390px 视口下宽 **373px**（占 96%），桌面 1920px 下
+     同样 373px 只占 19%。所以「正文铺满 y=0 + 胶囊浮在上面」在手机上
+     几乎等于一条全宽栏横压第一行 —— 截图里聊天第一行仍只剩半截。
+     旧版「通栏压字」和新版「胶囊压字」观感接近，只是遮挡物形状变了。
+     → 是否给手机正文加 52px 顶部留白，必须由用户拍板，不要自行补。 */
+
+/* ★ 极窄屏（<370px）：344px 的胶囊会顶出屏幕右边。
+   用户选的是「照搬不缩、可横向滑动」，所以不缩图标，只把 holder 变成
+   隐藏滚动条的横向滚动容器。
+   为什么阈值取 370 而不是所有手机都加 overflow：
+     Chrome 里滚动容器内的 backdrop-filter 可能退化（见 11.12 注释），
+     390~430px 常见机型本来放得下、不需要滚动，留着完整毛玻璃更划算。 */
+@media (max-width: 370px) {
   body.mf-tb-js #top-settings-holder {
-    /* ★ v1.9.0：桌面 11.2 把 holder 改成了 fixed 浮层。手机这边必须**退回
-       文档流**（原生就是 relative），否则整条 100% 宽的顶栏会浮在正文上，
-       把正文第一整行横着压住 —— 那就不是「铺满顶部」，是盖住正文。 */
-    position: relative !important;
-    top: auto !important;
-    left: auto !important;
-    z-index: 3005;
-    width: 100% !important;
-    height: var(--topBarBlockSize) !important;
-    margin: 0 !important;
-    padding: 0 2px !important;
-    gap: 0;
-    border: 0;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
+    max-width: calc(100vw - 20px) !important;
+    max-width: calc(100dvw - 20px) !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
   }
+  body.mf-tb-js #top-settings-holder::-webkit-scrollbar { display: none !important; }
 
-  body.mf-tb-js #top-settings-holder > .drawer {
-    flex: 1 1 0 !important;
-    width: auto !important;
-    min-width: 0 !important;
-    justify-content: center !important;
+  /* ★ 折叠键钉在可视区最左，不随横向滚动滑走（2026-11-06 用户拍板）。
+     ★ 关键数据（别去改 DOM 顺序）：index.js 的 makeTg() 用的是
+       `holder.insertBefore(d, holder.firstElementChild)`，折叠键**本来就是
+       第一个子元素**，不需要加 order、更不需要动 JS。
+       验收模拟页曾把它放在最后，导致截图里 ^ 跑到最右、误判成
+       「要滑到最右才找得到」—— 那是模拟页偏差，已修正。
+       用户要的是「滑到右边时它仍在」，所以只补 sticky。
+     ★ sticky 必须自带底色：holder 是半透明玻璃，不给背景的话横向滚动时
+       后面的图标会从这颗底下透出来，看起来像两颗叠在一起。
+       z-index 只需盖过同级 .drawer（holder 自己是 fixed+z-index:4000 的
+       stacking context，2 就够了）。 */
+  body.mf-tb-js #top-settings-holder > .mf-tb-tg {
+    position: sticky !important;
+    left: 0 !important;
+    z-index: 2;
+    background: linear-gradient(180deg, rgba(255, 254, 250, .97), rgba(243, 235, 219, .94));
+    border-radius: 9px 0 0 9px;
   }
-
-  body.mf-tb-js #top-settings-holder .drawer-icon { margin: 0 auto; }
-  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 20px; height: 20px; }
-
-  /* 折叠键不参与均分，固定一颗 —— 它是额外的第十颗，
-     分隔线也不要（铺满一行时那条线会像多出一根格栏）。 */
-  body.mf-tb-js .mf-tb-tg {
-    flex: 0 0 auto !important;
-    margin-right: 0;
-    padding-right: 0;
-    border-right: 0;
-  }
-  body.mf-tb-js .mf-tb-tgi { width: 34px; height: 34px; }
-
-  /* ★ 手机正文左右 padding 只有十几像素，左上角 24px 的浮片必然压到
-     第一行头几个字。给 #sheld 留 26px 顶部边距：视觉上只是「正文上方
-     有一点点留白」，不是一条栏，但浮片就永远碰不到字了。 */
-  body.mf-tb-js.mf-tb-col #sheld { padding-top: 26px; }
-
-  body.mf-tb-js.mf-tb-col .mf-tb-tgi {
-    width: 24px;
-    height: 24px;
-    border-radius: 8px;
-    opacity: .30;
-  }
-  body.mf-tb-js.mf-tb-col .mf-tb-tgi > svg { width: 14px; height: 14px; }
-}
-
-/* 窄屏（320~400）：图标再收一档，十颗不换行。
-   算法：9 × 34 + 34 + 2 × 2 = 344，320 的屏装不下 → 缩到 30。 */
-@media (max-width: 400px) {
-  body.mf-tb-js #top-settings-holder .drawer-icon { width: 30px; height: 30px; }
-  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 18px; height: 18px; }
-  body.mf-tb-js .mf-tb-tgi { width: 30px; height: 30px; }
-  body.mf-tb-js .mf-tb-tgi > svg { width: 17px; height: 17px; }
-}
-
-/* ★ 极窄（<330）：每格只剩 24px，图标还留 30px 就会互相压。
-   图标必须跟着格子一起缩，不能只缩格子。
-   （桌面把窗口拖到 250 宽实测：9 格各 24.4，icon 仍报 30 → 重叠） */
-@media (max-width: 330px) {
-  body.mf-tb-js #top-settings-holder .drawer-icon { width: 24px; height: 26px; }
-  body.mf-tb-js .drawer-icon.mf-ic > svg { width: 16px; height: 16px; }
-  body.mf-tb-js .mf-tb-tgi { width: 24px; height: 26px; }
-  body.mf-tb-js .mf-tb-tgi > svg { width: 15px; height: 15px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

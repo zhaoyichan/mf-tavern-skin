@@ -9,7 +9,7 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.0.2；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.0.3；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | DOM 真相 | `#top-bar` 是 `absolute` 空壳（50vw×44），与 `#top-settings-holder` 是**兄弟节点**；9 个 drawer 全在 holder 里 |
 | 九个 drawer | `ai-config-button` / `sys-settings-button` / `advanced-formatting-button` / `WI-SP-button` / `user-settings-button` / `backgrounds-button` / `extensions-settings-button` / `persona-management-button` / `rightNavHolder` |
@@ -449,3 +449,17 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
         ③ 两个常驻 setInterval 收敛：快捷回复栏 1s→2s、预设自愈 2.5s→5s，
            并去掉 getClientRects()（强制同步布局），改查 .drawer-content 的 class。
         ④ 对 index.js 的独立改动做成 _patch_perf.py（幂等），注入后才能重放。
+2.0.3 — 2026-11-06 手机顶栏对齐桌面 + 正文左右对称：
+        ① 手机顶栏从「铺满通栏」改成照搬桌面靠左毛玻璃胶囊：删掉 11.10 的
+           设备覆盖，11.5b（正文铺满 y=0）/ 11.11（抽屉让位）/ 11.12（毛玻璃）
+           放宽到全设备；折叠态也跟桌面一致。<370px 胶囊横向滑动，
+           折叠键 sticky 钉在最左，不随滚动滑走。
+        ② 输入框彻底隐藏 ▶继续 / ⏸暂停（保留 ⏹停止），手机 + 桌面两端一致。
+        ③ 修正文整体偏左、右边多一截空白：原生 .mes_text 带
+           padding-right: var(--mes-right-spacing)=30px（原本给头像/操作按钮留位），
+           本扩展隐藏头像后没归零 → 每条消息右侧恒定多一块空白
+           （864×1920 手机截图实测：左留白 93px / 右留白 188px）。
+           补 padding-right:0 后左右对称；「左右留白」滑块、字号、行高、
+           用户消息左竖线一律未动。
+        ④ 验收：headless Edge + CDP 计算样式，.mes_text 左右 padding 均为 0px、
+           .mes 左右留白各 11.7px（390px 视口）；顶栏与折叠态回归通过，无 JS 异常。
