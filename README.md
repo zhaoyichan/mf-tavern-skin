@@ -9,7 +9,7 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.0.3；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.0.4；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | DOM 真相 | `#top-bar` 是 `absolute` 空壳（50vw×44），与 `#top-settings-holder` 是**兄弟节点**；9 个 drawer 全在 holder 里 |
 | 九个 drawer | `ai-config-button` / `sys-settings-button` / `advanced-formatting-button` / `WI-SP-button` / `user-settings-button` / `backgrounds-button` / `extensions-settings-button` / `persona-management-button` / `rightNavHolder` |
@@ -463,3 +463,35 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
            用户消息左竖线一律未动。
         ④ 验收：headless Edge + CDP 计算样式，.mes_text 左右 padding 均为 0px、
            .mes 左右留白各 11.7px（390px 视口）；顶栏与折叠态回归通过，无 JS 异常。
+2.0.4 — 2026-11-06 主题接管（启动时不再变三种主题） + 输入框 + 手机抽屉：
+        ① ★ 核心：本扩展不再「在酒馆原主题上面抢顺序叠一层」。
+           旧链路 = 启动早期 applyCustomCSS() 注入旧主题（报纸）
+           → 扩展 JS 跑起来后 muteTheme() 把 #custom-style disabled=true
+             （露出酒馆原版）→ pinOnce() 把 skin.css 挪到 head 末尾（米白）
+           → [80,260,900,2200]ms 一串 tick 反复做，把三段拉长到肉眼可见。
+           所以**每次退出重开都会变三种主题**，不是只有安装那一次。
+           新做法：installAsTheme() 把 skin.css 全文写进酒馆自己的主题槽位
+           power_user.custom_css（走 #customCSS 的 input 事件 → ST 落盘到
+           settings/appearance.json）；下次冷启动 applyCustomCSS() 在扩展
+           加载之前就注入，第一帧就是米白。同时删掉 muteTheme / 四段 tick，
+           不再 disable #custom-style（它现在装的是皮肤自己）。
+           已核对 ST 源码：public/scripts/power-user.js:3351-3355
+           `$('#customCSS').on('input', ...)` → power_user.custom_css +
+           saveSettingsDebounced() + applyCustomCSS()，与实现完全一致。
+           配套：管理面板「整套外观」开关的 #custom-style disabled 语义
+           一并反转（开=启用，关=停用），否则点一次开关就会把主题槽位关掉。
+        ② 输入框再去掉 ⏹ 停止（#stscript_stop）。▶/⏸/⏹ 三颗现在全隐藏；
+           ■ #mes_stop（生成中中断）保留，去了就没法中途停生成。
+        ③ 手机预设/世界书抽屉补 11.11m：只让位、不钉死 height，
+           max-height 改用 100vh（不再依赖 100dvh / --bottomFormBlockSize），
+           强制 overflow-y:auto + iOS 惯性滚动；不加 touch-action 以免影响滑杆。
+        ④ ★ 已知待确认（别当「已修复」宣传）：做了 v2.0.3 / v2.0.4 对照验收，
+           390px 下**两版在模拟环境里都能滚**（原生 .drawer-content.openDrawer
+           的 overflow-y:auto 特异性高于 .fillLeft 的 overflow:hidden）。
+           真机「手指划完全没反应」的根因尚未复现，可能来自手机 WebView 的
+           dvh 结算、手机酒馆版本差异、手机扩展未更新、或别的插件拦截 touch。
+           11.11m 是防御性修复，需手机上更新到本版后目视确认。
+        ⑤ 验收：_v204_check.py / _v204_check.js（内联真 skin.css + 真
+           initStyleGuard 源码）。主题槽位 styleIsSkin=true / disabled=false /
+           textareaLen=137460 / inputCount=1；三颗按钮均 display:none、
+           mes_stop 仍 block；桌面 1280px 回归通过；无 JS 异常。

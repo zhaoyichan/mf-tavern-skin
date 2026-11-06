@@ -142,20 +142,46 @@
     }
 
     /* ═════════════════════════════════════════════════════════════════════
-       模块 1 · style-guard + 主题接管
-       ★ v1.9.1 重写。旧版是「反复把自己挪到 head 末尾」抢顺序，问题是：
-         主题每次切换/重绘都会往末尾 append <style id="custom-style">，
-         两边来回抢 → 页面上就是 米白 → 报纸 → 米白 → 报纸 连闪三四下
-         （用户实测反馈，不是猜的）。
-       ★ 新做法：不抢顺序，直接把对方关掉。
-         酒馆的 custom_css 有固定 id（st_power.js 的 applyCustomCSS:
-         styleId = 'custom-style'），<style> 支持 disabled 属性，
-         设 true 后整张表不参与层叠计算 —— 报纸/微信读书一点痕迹都不会留。
-         disabled 写在 MutationObserver 回调里，属于渲染前的微任务，
-         没有中间态，所以不闪。
-       ★ 自己的 link 只钉一次（压 user.css 这一类同优先级规则），之后永不移动。
-       ★ 用户关掉整套外观时（mf_skin_on = '0'）这里什么都不做，
-         主题原样保留，保证「关 = 完全是酒馆原主题」。
+       模块 1 · 主题接管（v2.0.4 重写：不再在别人的主题上面叠一层）
+       ★★ 2026-11-06 用户实测并纠正：不是「安装库链那一次」，
+         是**每次退出酒馆再打开**都会依次变三种主题
+         报纸 → 酒馆原版 → 米白。原话：「这个扩展本身就是个主题，
+         为什么前面还要有主题」「我要的是秒加载」。
+
+       ★ 真根因（查过 ST 1.19.0 的 index.html + power-user.js，不是猜）：
+         ① index.html 的 head 里 15 个 <link> 全是酒馆自己的 CSS，
+            **没有扩展 CSS** —— 扩展的 skin.css / index.js 是启动后运行时
+            才动态插进 head 的。所以扩展永远比主题晚。
+         ② 启动早期 applyPowerUserSettings() → applyCustomCSS() 把
+            power_user.custom_css（手机上选的是「报纸(无滤镜)」主题，
+            15.5KB CSS）注入 <style id="custom-style"> → 第一段「报纸」。
+         ③ 旧版 initStyleGuard() 的 muteTheme() 把这个 <style>
+            disabled=true → 旧主题没了、新 CSS 还没接管 → **第二段「原版」**。
+         ④ pinOnce() 把 skin.css 的 <link> 挪到 head 末尾 → 第三段「米白」。
+         ⑤ [80, 260, 900, 2200]ms 一串 tick 反复做 ③④，
+            把这三段拉长到肉眼数得出来。
+         → 「抢顺序 + 关掉对方」这套叠加式设计本身就是病根，
+           调 !important / z-index / 遮罩都治不了。
+
+       ★ 新做法：把皮肤 CSS **写进酒馆自己的主题槽位**
+         power_user.custom_css。ST 启动早期 applyCustomCSS() 会读它并注入
+         <style id="custom-style">，早于扩展加载 → 从下一次冷启动起
+         **第一帧就是米白**，报纸和中间那版原版都不再出现。
+         扩展的 <link> 只钉一次做兜底，不再挪来挪去、不再 disable 主题。
+
+       ★ 关键数据（2026-11-06 实测，别改回去）：
+         · 落盘位置：data/default-user/settings/appearance.json →
+           power_user.custom_css；themes/*.json 里每个主题也带 custom_css。
+         · applyCustomCSS() 从 power_user.custom_css 取值，同步给
+           #customCSS textarea，写入 <style id="custom-style">（head 末尾）。
+           源码 public/scripts/power-user.js。
+         · #customCSS 是设置面板里的 textarea，触发它的 input 事件就是
+           ST 官方保存路径（写 power_user.custom_css + saveSettingsDebounced）。
+         · user.css 是 head 里最后一个静态 <link>（index.html:46），
+           第一帧就生效，但扩展 JS 写不了磁盘文件，手机端指望不上。
+       ★ 用户拍板：「不用管，我没打算关」→ 不保留旧主题、不做还原路径。
+         已知限制：mf_skin_on='0' 只停用 <link>，#custom-style 里的皮肤
+         不会被清掉（用户明确不需要这条路径，别自作主张补）。
        ═════════════════════════════════════════════════════════════════════ */
     function initStyleGuard() {
         var pinned = false;
@@ -171,11 +197,9 @@
             try { return localStorage.getItem('mf_skin_on') !== '0'; } catch (e) { return true; }
         }
 
-        function muteTheme() {
-            if (!skinWanted()) return;
-            var ts = document.getElementById('custom-style');
-            if (ts && !ts.disabled) ts.disabled = true;
-        }
+        /* ★ 这里原本有 muteTheme()：把 #custom-style disabled=true。
+           v2.0.4 删掉了 —— 现在那个 <style> 装的是**皮肤自己**，
+           disable 它正是「报纸 → 原版」那一帧的来源。别再加回来。 */
 
         function pinOnce() {
             if (pinned) return true;
@@ -196,13 +220,13 @@
             if (node.disabled === want) node.disabled = !want;
         }
 
-        function tick() { pinOnce(); applyLinkState(); muteTheme(); }
+        /* ★ 只跑一次。旧版 [80,260,900,2200] 四段 tick 每次都
+           appendChild + disable 主题，正是「过一会…再过一会」的节奏来源。 */
+        pinOnce();
+        applyLinkState();
 
-        tick();
-        [80, 260, 900, 2200].forEach(function (t) { setTimeout(tick, t); });
-
-        /* 主题切换 / 导入主题 / 在设置里改自定义 CSS → 都会新建或重建
-           #custom-style。这里只处理「新增」，不碰位置，所以不会抖。 */
+        /* 扩展重载时酒馆会重建 <link>，新节点 disabled 默认 false，
+           重套一次开关。不挪主题、不 disable，所以没有中间态。 */
         try {
             var obs = new MutationObserver(function (list) {
                 var touch = false;
@@ -211,20 +235,76 @@
                     if (!an) continue;
                     for (var j = 0; j < an.length; j++) {
                         var el = an[j];
-                        if (el.nodeType === 1 && (el.id === 'custom-style'
-                            || el.tagName === 'STYLE' || el.tagName === 'LINK')) {
+                        if (el.nodeType === 1 && (el.tagName === 'LINK' || el.id === 'mf-skin')) {
                             touch = true;
                         }
                     }
                 }
-                /* 扩展重载时酒馆会重建 <link>，新节点 disabled 默认 false，
-                   不重套一遍开关就会在「已关」状态下把皮肤放出来。 */
-                if (touch) { applyLinkState(); muteTheme(); }
+                if (touch) { pinned = false; pinOnce(); applyLinkState(); }
             });
             obs.observe(head, { childList: true });
         } catch (e) {
-            console.warn(LOG, '样式守护没起来，皮肤可能被主题盖住', e);
+            console.warn(LOG, '样式守护没起来', e);
         }
+
+        /* ── 把皮肤装成酒馆自己的主题（v2.0.4 核心改动）────────────────
+           fetch 自己那份 skin.css 全文 → 写进 #customCSS textarea 并
+           trigger('input') 让 ST 自己写 power_user.custom_css + 落盘到
+           settings/appearance.json → 下次冷启动 applyCustomCSS() 直接注入，
+           第一帧就是米白。
+           ② 同时把全文写进 #custom-style，保证**本次会话**立刻生效，
+              不依赖 ST 有没有真的绑 input（双保险，不是抢顺序）。 */
+        var THEME_LEN_KEY = 'mf_theme_css_len';
+
+        function installAsTheme(attempt) {
+            var mark = 0;
+            try { mark = Number(localStorage.getItem(THEME_LEN_KEY) || 0); } catch (e) { }
+            var already = byId('custom-style');
+            // 下次启动：ST 已把皮肤注入 #custom-style，长度对得上就直接跳过，零开销
+            if (mark && already && already.innerHTML.length === mark) return;
+
+            var link = findSkin();
+            var ta = byId('customCSS');
+            if (!link || !ta) {
+                // #customCSS 在设置面板里，可能比扩展晚一点才出现；只在首次安装时轮询
+                if (attempt < 8) setTimeout(function () { installAsTheme(attempt + 1); }, 250);
+                return;
+            }
+
+            fetch(link.href, { cache: 'force-cache' }).then(function (r) {
+                return r.ok ? r.text() : null;
+            }).then(function (css) {
+                if (!css || css.length < 1000) return;
+                var st = byId('custom-style');
+                if (st && st.innerHTML === css) {
+                    try { localStorage.setItem(THEME_LEN_KEY, String(css.length)); } catch (e) { }
+                    return;
+                }
+
+                // ① ST 官方保存路径：写 textarea + input → power_user.custom_css
+                //    + applyCustomCSS() + saveSettingsDebounced()（落盘）
+                try {
+                    ta.value = css;
+                    if (window.jQuery) window.jQuery(ta).trigger('input');
+                    else ta.dispatchEvent(new Event('input', { bubbles: true }));
+                } catch (e) { /* 交给 ② 兜底 */ }
+
+                // ② 本次会话立刻生效
+                st = byId('custom-style');
+                if (!st) {
+                    st = document.createElement('style');
+                    st.id = 'custom-style';
+                    st.setAttribute('type', 'text/css');
+                    head.appendChild(st);
+                }
+                if (st.innerHTML !== css) st.innerHTML = css;
+                try { localStorage.setItem(THEME_LEN_KEY, String(css.length)); } catch (e) { }
+            }).catch(function (e) {
+                // 写不进主题槽位也不要紧：扩展自己的 <link> 照常生效，不会比旧版更差
+                console.warn(LOG, '写主题槽位失败（扩展 CSS 仍照常生效）', e);
+            });
+        }
+        setTimeout(function () { installAsTheme(0); }, 300);
 
         setTimeout(function () {
             if (!findSkin()) {
@@ -2084,20 +2164,24 @@
             }
         }
 
-        /* ── 整套外观 ⇄ 酒馆原生（v1.9.1）─────────────────────────────
-           用户场景：另一台手机的主题是「报纸」，装扩展后界面里还留着报纸的
-           底色/背景图/字体 —— 因为旧版只是把米白「盖」上去，没盖到的地方
-           还是报纸。这里改成「接管」：开的时候先把主题的 custom_css 停掉，
-           关的时候把自己整套撤干净、主题原样恢复。
+        /* ── 整套外观 ⇄ 酒馆原生（v1.9.1；v2.0.4 改了主题那一半）──────
+           历史场景：另一台手机的主题是「报纸」，装扩展后界面里还留着报纸的
+           底色/背景图/字体 —— 旧版只是把米白「盖」上去，没盖到的地方还是报纸。
+           所以旧版「开」的时候会把 #custom-style disabled=true 停掉主题。
 
-           ★ 顺序不能反：
-             关 → 先 wr(KEY_ON,'0') + apply() 撤顶栏，再禁用 skin.css，
-                  最后恢复主题。反过来会先出现「原生样式 + 改造后顶栏」的错位帧。
-             开 → 先启用 skin.css，再禁主题，最后开顶栏。
+           ★★ v2.0.4 这条**必须反过来**：现在 #custom-style 里装的是
+             installAsTheme() 写进去的**皮肤自己**（power_user.custom_css）。
+             再 disabled=true 就等于把皮肤关掉，而且下次冷启动
+             applyCustomCSS() 注入的那份也会被关掉 —— 用户要的「第一帧
+             就是米白」直接失效。所以：
+               开 → link 启用 + #custom-style **启用**
+               关 → link 停用 + #custom-style **停用**（回到酒馆原生）
+           ★ 顺序不能反：关 → 先 wr + apply() 撤顶栏，再停 skin.css；
+             反过来会出现「原生样式 + 改造后顶栏」的错位帧。
            ★ 不调 setOn() 而是直接 wr + apply()：setOn 会弹自己的 toast，
              两个 toast 会叠在一起，看起来像出了两次错。
-           ★ 禁用/恢复的是 #custom-style 的 disabled 属性，不删内容、不写文件，
-             所以「关」之后主题完全是原样，刷新也不会丢东西。
+           ★ 用户 2026-11-06 明确「不用管，我没打算关」，所以这里只保证
+             语义一致、不额外做旧主题还原；别再自作主张加备份/恢复逻辑。
         */
         function skinLink() {
             return document.querySelector('link[rel="stylesheet"][href*="mf-tavern-skin"]');
@@ -2117,7 +2201,8 @@
 
             if (on) {
                 if (link) link.disabled = false;
-                if (ts) ts.disabled = true;
+                /* v2.0.4：#custom-style 现在是皮肤自己，开就要让它生效 */
+                if (ts) ts.disabled = false;
                 wr(KEY_ON, '1');
                 /* link 停用期间注入的 SVG / 折叠键被清掉了，这里补回来 */
                 if (holder) {
@@ -2146,7 +2231,8 @@
                 });
                 tg = null;
                 if (link) link.disabled = true;
-                if (ts) ts.disabled = false;
+                /* v2.0.4：连主题槽位那份一起停，才是真正的「酒馆原生」 */
+                if (ts) ts.disabled = true;
             }
 
             if (panel && panel.classList.contains('on')) buildList();

@@ -387,26 +387,29 @@ body   { background-image: none !important; }
 }
 #token_counter { color: var(--mf-ink3) !important; }
 
-/* ── 6.05 输入框：彻底去掉「▶继续 / ⏸暂停」两颗（2026-11-06，用户拍板）──
-   ★ 口径（用户从四个选项里选的）：**手机 + 桌面两端都彻底隐藏**，
-     不是「只在手机隐藏」，也不是「只恢复原生行为」。
-     所以这里写成全局规则、不带任何 @media，且必须 !important。
+/* ── 6.05 输入框：彻底去掉「▶继续 / ⏸暂停 / ⏹停止」三颗（2026-11-06，用户拍板）──
+   ★ 口径：手机 + 桌面两端都彻底隐藏，不带任何 @media，且必须 !important。
+   ★ 2026-11-06 追加：用户原话「去掉输入框那个方」= ⏹ #stscript_stop，
+     上一轮特意保留的这颗也一起隐藏。
+     #mes_stop（生成回复时的 ■ 中断）**保留** —— 去掉就没法中途停生成，
+     用户没要求动它。两者别搞混：一个在 #rightSendForm 里带 stscript_btn，
+     一个是独立的 .mes_stop。
    ★ 关键数据 / 踩坑（别改成别的选择器）：
-     · ST 1.18.0 与 1.19.0 的 index.html 里，这两个的真实 id 是
-       #stscript_continue / #stscript_pause；第三颗 #stscript_stop 保留不动。
-       它们都带 class="stscript_btn stscript_continue / stscript_pause"。
+     · ST 1.18.0 与 1.19.0 的 index.html 里，三颗的真实 id 是
+       #stscript_continue / #stscript_pause / #stscript_stop，
+       都带 class="stscript_btn ..."（见 _ref/_st_119_index.html）。
      · 原生 CSS（st_style.css:1015/1020-1028）本来是
        `.stscript_btn { display: none }`，只在 body 处于脚本执行/暂停态时
-       才把 pause / stop / continue 放成 flex。也就是「平时不该出现」。
+       才把 pause / stop / continue 放成 flex，也就是「平时不该出现」。
      · 但 TauriTavern 2.4.0 手机端（2026-11-05 真机截图）把 ▶⏸⏹ 三颗
-       全部常驻显示在输入行里 —— 这是手机端自己的样式把 display:none 冲掉了，
+       全部常驻显示在输入行里 —— 手机端自己的样式把 display:none 冲掉了，
        不是脚本真的在跑。所以靠「恢复原生」修不好，只能显式钉死。
-     · 用 id 而不是 .stscript_btn：class 会连 #stscript_stop 一起杀掉，
-       用户只勾了 ▶继续 + ⏸暂停，⏹停止要留。
-   ★ 为什么写在第 6 节里、不写到文件末尾：同节就近，以后改输入栏时一眼能看到。
-   ★ 本轮只改本地桌面这份，未推 GitHub；手机要生效需后续发版 + 手机更新扩展。 */
+     · 不要写成 .stscript_btn 一把梭：会连别的脚本按钮一起杀掉；
+       这里按 id 逐个列，范围可控、以后要放回哪一颗也好改。
+   ★ 为什么写在第 6 节里、不写到文件末尾：同节就近，以后改输入栏时一眼能看到。 */
 #stscript_continue,
-#stscript_pause { display: none !important; }
+#stscript_pause,
+#stscript_stop { display: none !important; }
 
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -2099,6 +2102,53 @@ body.mf-tb-js #top-settings-holder .drawer-content.fillRight {
    只差这一处没对齐。 */
 body.mf-tb-js #top-settings-holder #WorldInfo {
   top: 52px !important;
+}
+
+/* ── 11.11m 手机抽屉：让位胶囊，但必须能滚（2026-11-06 修 v2.0.3 回归）──
+   ★★ 这是 v2.0.3 自己造成的回归，别再按「顶栏 z-index」的方向查。
+     v2.0.2 里 11.11 整组包在 @media (min-width:769px) and (pointer:fine)，
+     手机根本不生效；v2.0.3 为了让手机胶囊不被抽屉盖住，把它放宽到全设备，
+     于是手机上第一次被钉上：
+       .fillLeft/.fillRight → height:calc(100dvh - 52px) !important
+       普通 .drawer-content → max-height:calc(100dvh - 52px - 底栏) !important
+     用户 2026-11-06 真机反馈：「预设、世界书这些界面手指划完全没反应」。
+
+   ★★ 2026-11-06 headless 对照验收更正（别把下面「疑似根因」当定论）：
+     用真 skin.css + 真原生规则做了「v2.0.3 修复前 / v2.0.4 修复后」
+     对照页（_v204_check.py / _v204_check.js），390px 下**两版
+     canScroll 都是 true、overflowY 都是 auto**。
+     原因：原生 `.drawer-content.openDrawer { overflow-y:auto }`
+     特异性 (0,2,0) 高于 `.fillLeft { overflow:hidden }` (0,1,0)，
+     所以预设面板在模拟环境里本来就能滚 ——
+     我最初写的「.fillLeft 的 overflow:hidden 是真根因」**不成立**。
+     → 真机「手指划完全没反应」的根因**尚未复现**，候选：
+       · Tauri 手机 WebView 里 100dvh / --bottomFormBlockSize 结算异常
+         （软键盘弹出会把底栏变量撑大，max-height 可能塌到 0）
+       · 手机上酒馆版本与桌面不同（用户明确说过版本不一样）
+       · 手机上装的扩展不是 v2.0.3（auto_update:false，需手动点更新）
+       · 别的插件（圆形悬浮球那类）拦截了 touch 事件
+     ★ 所以下面这段是**防御性修复**：去掉对 100dvh / 底栏变量的依赖、
+       强制面板自己可滚，对冲上面前两条。**是否真修好必须由用户在手机上
+       更新到 v2.0.4 后目视确认**，不要凭这个模拟页就说「已修复」。
+
+   ★ 修法：手机单独一套，只让位、不钉死高度；上限改用 100vh
+     （不依赖 dvh / 底栏变量），并强制面板自己 overflow-y:auto。
+     · 普通抽屉是 absolute（相对 fixed 的 holder），top 用 44；
+       fixed 面板（预设 / 世界书）沿用 11.11 的 52，这里不再改。
+     · 只命中 .openDrawer，避免影响关闭态和 #floatingPrompt。
+     · 不加 touch-action：预设面板里全是滑杆，pan-y 会拖不动它们。 */
+@media (max-width: 768px), (pointer: coarse) {
+  body.mf-tb-js #top-settings-holder .drawer-content.openDrawer:not(.fillLeft):not(.fillRight):not(#floatingPrompt) {
+    top: 44px !important;
+  }
+  body.mf-tb-js #top-settings-holder .drawer-content.openDrawer:not(#floatingPrompt),
+  body.mf-tb-js #top-settings-holder #WorldInfo.openDrawer {
+    height: auto !important;
+    max-height: calc(100vh - 60px) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* ── 11.12 玻璃模糊层（v1.9.2；2026-11-06 放宽到全设备）────────────
