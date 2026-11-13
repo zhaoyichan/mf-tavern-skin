@@ -1573,15 +1573,20 @@ body.mf-tb-js #top-settings-holder {
         就是这个原因）。纯渐变，零 GPU 代价，不碰 backdrop-filter。
      ② 竖直三段：上沿受光最亮 → 中段本色 → 下沿略沉，装出厚度。
      两层叠起来，才像一片有厚度、有反光的薄玻璃。 */
+  /* ★ 2026-11-07 v2.0.8：三段 alpha 从 .88 / .76 / .62 提到 .985 / .975 / .965。
+     ::before 的 backdrop-filter 关掉之后，原来那层半透明会直接透出底下的正文，
+     文字叠字比模糊难看得多（v1.9.0 的注释里就写明了这个道理）。
+     提实之后胶囊是「实心米白片」，代价是彻底不透底下的字。
+     ★ 回滚：改回 .88 / .76 / .62，同时把 11.12 的 blur 开回来。 */
   background:
     linear-gradient(105deg,
       rgba(255, 255, 255, .58) 0%,
       rgba(255, 255, 255, .14) 26%,
       rgba(255, 255, 255, 0) 46%),
     linear-gradient(180deg,
-      rgba(255, 254, 250, .88) 0%,
-      rgba(246, 239, 226, .76) 52%,
-      rgba(232, 222, 202, .62) 100%);
+      rgba(255, 254, 250, .985) 0%,
+      rgba(250, 244, 232, .975) 52%,
+      rgba(242, 234, 216, .965) 100%);
   /* ★★ v1.9.0 把 backdrop-filter 加回来 —— 但这次是**有条件的**，别照抄别处：
      之前（v1.7.1）删掉它的理由是「胶囊背后是纯米白纸面，模糊纯色等于没模糊」。
      v1.9.0 让正文从 y=0 铺满整屏、胶囊浮在上面之后，**背后真的有文字在过**了。
@@ -2176,8 +2181,20 @@ body.mf-tb-js #top-settings-holder::before {
   border-radius: inherit;
   pointer-events: none;
   z-index: -1;
-  -webkit-backdrop-filter: blur(16px) saturate(1.08);
-  backdrop-filter: blur(16px) saturate(1.08);
+  /* ★★★ 2026-11-07 v2.0.8 对照实验：这两行原来是
+       -webkit-backdrop-filter: blur(16px) saturate(1.08);
+       backdrop-filter: blur(16px) saturate(1.08);
+     用户报「从一个面板直接切到另一个时容易卡」。
+     抽屉（.drawer-content）是从胶囊底下滑出来的 —— 毛玻璃元素背景里有东西在动，
+     浏览器就得每帧重新模糊一遍整个面板，切换时是两个抽屉同时在动。
+     先把模糊关掉做对照（胶囊底色同时提实，见 11.2 的 background）。
+     ★ 判读：卡消失 = 就是它。之后二选一：
+       ① 永久保持实心（代价：胶囊不再透出底下的字，视觉上从「磨砂玻璃」变「实心米白片」）；
+       ② 只在抽屉开合那 300ms 里临时关模糊，切完再开回来（视觉不变，代码稍复杂）。
+     想立刻回滚：把下面两行改回上面的 blur(16px) saturate(1.08)，并把 11.2 的
+     background 三段 alpha 改回 .88 / .76 / .62。 */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 /* ── 11.10 手机 / 触屏：与桌面一致的靠左小胶囊（2026-11-06 重写）────
@@ -3596,3 +3613,1758 @@ body.dark #mfWb, body[data-theme="dark"] #mfWb, #mfWb.mf-night { --paper:#1a1d23
     0%, 100% { opacity: 1 }
     50% { opacity: .45 }
 }
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   模块 9：主聊天 AI 照片（index.js → initChatPhoto）
+   ─────────────────────────────────────────────────────────────────────────
+   2026-11-13 用户口径：
+   · 名字下面一条极细虚线「加张照片」，没导入就什么都不显示
+   · 宽和高各自独立可调（不是等比），三档预设 + 三种渐变
+   · 收起 = 不渲染，回到普通 HTML
+   · 手机没有 hover，工具条收成一个「⋯」，点开才展开
+
+   ★ 高度只有两个来源：body 上的 --mf-ph-w / --mf-ph-h。
+     任何写死 height / max-height 的地方都会把用户调的数值吃掉（原型上栽过一次）。
+   ★ 渐变用 mask 让图自己透明，别叠一层纸色渐变遮罩 —— 叠遮罩会让图发灰。
+   ★ 别用 aspect-ratio 控制形状：那是等比，用户要的是宽高任意组合。
+   ═════════════════════════════════════════════════════════════════════════ */
+
+#chat .mes .mf-ph,
+#chat .mes .mf-addp { max-width: 100%; }
+
+.mf-ph {
+    position: relative;
+    display: block;
+    width: var(--mf-ph-w, 100%);
+    height: var(--mf-ph-h, 118px);
+    margin: 3px 0 11px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: none;
+}
+.mf-ph .mf-ph-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 26%;
+    display: block;
+}
+
+/* 渐变：默认只化开下缘，顶部与左右保持完全不透明 */
+body[data-mf-ph-fade="bottom"] .mf-ph .mf-ph-img {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 72%, rgba(0,0,0,0) 100%);
+            mask-image: linear-gradient(to bottom, #000 0%, #000 72%, rgba(0,0,0,0) 100%);
+}
+body[data-mf-ph-fade="both"] .mf-ph .mf-ph-img {
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 11%, #000 74%, rgba(0,0,0,0) 100%);
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 11%, #000 74%, rgba(0,0,0,0) 100%);
+}
+body[data-mf-ph-fade="none"] .mf-ph .mf-ph-img {
+    -webkit-mask-image: none;
+            mask-image: none;
+}
+
+/* 工具条：桌面 hover 才浮出，手机常驻（否则永远点不到） */
+.mf-ph-bar {
+    position: absolute;
+    right: 8px;
+    top: 9px;
+    opacity: 0;
+    transition: opacity .15s;
+    z-index: 3;
+}
+.mf-ph:hover .mf-ph-bar,
+.mf-ph.menu-on .mf-ph-bar { opacity: 1; }
+
+.mf-ph-more {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: rgba(28,24,18,.42);
+    -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,.16);
+    padding: 0;
+    cursor: pointer;
+}
+.mf-ph-more:hover { background: rgba(28,24,18,.62); }
+.mf-ph-more svg { width: 13px; height: 13px; }
+
+/* 触摸屏：没有 hover，⋯ 常驻 */
+@media (hover: none) {
+    .mf-ph-bar { opacity: 1; top: 7px; }
+    .mf-ph-more { background: rgba(28,24,18,.5); }
+}
+
+/* ⋯ 展开的三个操作 */
+.mf-ph-menu {
+    position: absolute;
+    right: 8px;
+    top: 37px;
+    display: none;
+    min-width: 88px;
+    padding: 3px;
+    border-radius: 9px;
+    background: var(--mf-paper);
+    border: 1px solid var(--mf-line2);
+    box-shadow: 0 10px 28px rgba(60,48,30,.18);
+    z-index: 4;
+}
+.mf-ph.menu-on .mf-ph-menu { display: block; }
+.mf-ph-menu button {
+    display: block;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    text-align: left;
+    font-size: 12px;
+    color: var(--mf-ink);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.mf-ph-menu button:hover {
+    background: var(--mf-accent-bg);
+    color: var(--mf-accent-deep);
+}
+
+/* 「＋ 加张照片」：一条极细虚线，平时几乎看不见 */
+.mf-addp {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    margin: 5px 0 11px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--mf-ink3);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: color .14s;
+}
+.mf-addp i {
+    flex: 1;
+    height: 1px;
+    background: repeating-linear-gradient(90deg, var(--mf-line2) 0 3px, transparent 3px 7px);
+}
+.mf-addp span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.mf-addp svg { width: 10px; height: 10px; flex: none; }
+.mf-addp:hover { color: var(--mf-accent-deep); }
+
+/* ── 外观面板（挂 body、fixed；塞进 .mf-ph 会被照片高度裁掉） ── */
+.mf-ph-pop {
+    position: fixed;
+    z-index: 9998;
+    display: none;
+    width: 258px;
+    padding: 13px 14px 13px;
+    border-radius: 13px;
+    background: var(--mf-paper);
+    border: 1px solid var(--mf-line2);
+    box-shadow: 0 18px 48px rgba(60,48,30,.18);
+    font-size: 12px;
+    color: var(--mf-ink);
+}
+.mf-ph-pop.on { display: block; }
+.mf-ph-popt {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 11px;
+    letter-spacing: .12em;
+    color: var(--mf-ink2);
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+.mf-ph-popt em {
+    font-style: normal;
+    font-size: 9.5px;
+    letter-spacing: .03em;
+    color: var(--mf-ink3);
+    opacity: .85;
+}
+.mf-ph-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+.mf-ph-row > span {
+    flex: none;
+    width: 26px;
+    font-size: 10.5px;
+    color: var(--mf-ink3);
+}
+.mf-ph-row > b {
+    flex: none;
+    width: 36px;
+    text-align: right;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--mf-ink2);
+}
+.mf-ph-seg {
+    display: flex;
+    gap: 3px;
+    flex: 1;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--mf-accent-bg);
+}
+.mf-ph-seg button {
+    flex: 1;
+    padding: 6px 0;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    font-size: 10.5px;
+    line-height: 1;
+    color: var(--mf-ink2);
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+.mf-ph-seg button.on {
+    background: var(--mf-paper);
+    color: var(--mf-accent-deep);
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(60,48,30,.12);
+}
+.mf-ph-pop input[type=range] {
+    flex: 1;
+    height: 3px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--mf-line2);
+    border-radius: 2px;
+    outline: none;
+}
+.mf-ph-pop input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--mf-accent);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(60,48,30,.3);
+}
+
+/* ── 裁图弹窗 ── */
+.mf-ph-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(38,32,24,.34);
+    -webkit-backdrop-filter: blur(3px);
+            backdrop-filter: blur(3px);
+}
+.mf-ph-sheet.on { display: flex; }
+.mf-ph-card {
+    width: 100%;
+    max-width: 520px;
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--mf-paper);
+    border-radius: 15px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(40,32,20,.34);
+}
+.mf-ph-card header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    height: 47px;
+    padding: 0 15px;
+    border-bottom: 1px solid var(--mf-line);
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--mf-ink);
+}
+.mf-ph-card header .x {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 7px;
+    background: none;
+    font-size: 19px;
+    line-height: 1;
+    color: var(--mf-ink2);
+    cursor: pointer;
+}
+.mf-ph-card header .x:hover { background: var(--mf-accent-bg); }
+
+.mf-ph-pick { padding: 20px 15px; }
+.mf-ph-pick .dz {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 168px;
+    border: 1.5px dashed var(--mf-line2);
+    border-radius: 12px;
+    background: var(--mf-bg);
+    color: var(--mf-ink3);
+    cursor: pointer;
+    transition: border-color .16s, background .16s, color .16s;
+}
+.mf-ph-pick .dz:hover { border-color: var(--mf-accent); background: var(--mf-accent-bg); }
+.mf-ph-pick .dz svg { width: 26px; height: 26px; }
+.mf-ph-pick .dz b { font-size: 13px; color: var(--mf-ink2); }
+.mf-ph-pick .dz span { font-size: 11px; }
+
+.mf-ph-crop {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 15px;
+}
+.mf-ph-crop.on { display: block; }
+.mf-ph-box {
+    position: relative;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #2b261f;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+.mf-ph-box:active { cursor: grabbing; }
+.mf-ph-box img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: none;
+    max-height: none;
+    transform-origin: 0 0;
+    pointer-events: none;
+    -webkit-user-drag: none;
+}
+.mf-ph-box .frame {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+}
+.mf-ph-crop .hint {
+    margin: 9px 0 0;
+    font-size: 11px;
+    color: var(--mf-ink3);
+    text-align: center;
+}
+.mf-ph-crop input[type=range] {
+    width: 100%;
+    margin-top: 9px;
+    height: 3px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--mf-line2);
+    border-radius: 2px;
+    outline: none;
+}
+.mf-ph-crop input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--mf-accent);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(60,48,30,.3);
+}
+
+.mf-ph-card footer {
+    flex: none;
+    display: flex;
+    gap: 9px;
+    padding: 12px 15px 15px;
+    border-top: 1px solid var(--mf-line);
+}
+.mf-ph-card footer .ghost {
+    height: 38px;
+    padding: 0 16px;
+    border: 1px solid var(--mf-line2);
+    border-radius: 9px;
+    background: var(--mf-bg);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--mf-ink2);
+    cursor: pointer;
+}
+.mf-ph-card footer .ghost:hover { background: var(--mf-accent-bg); }
+.mf-ph-card footer .ok {
+    margin-left: auto;
+    height: 38px;
+    padding: 0 20px;
+    border: 1px solid var(--mf-accent-deep);
+    border-radius: 9px;
+    background: var(--mf-accent-deep);
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+}
+.mf-ph-card footer .ok:disabled { opacity: .42; cursor: not-allowed; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   mf-tavern-skin · 角色墙（改造酒馆原生的 #rm_print_characters_block）
+   ───────────────────────────────────────────────────────────────────────────
+   【这条线的核心决定】不重建 DOM，只重排原生结构。
+   原因：原生格子身上挂着点击选中、双击开聊、拖拽排序、右键菜单、收藏、
+   批量编辑、分组/标签文件夹这些事件。重建 DOM 等于把这些全接一遍，
+   接漏一个就坏一个，而且每次翻页/搜索都要整块重绘。所以反过来做：
+   **结构一个字节不动，只加两个 class + 全套 CSS。**
+
+   【真实结构（读 SillyTavern release 分支 public/index.html:7232 模板 +
+     script.js:945 getCharacterBlock 得到，2026-11-13 核对）】
+     #rm_print_characters_block            ← 列表容器，原生 display:flex 竖排
+       .character_select                   ← 一个格子
+         data-chid="12"  id="CharID12"     ← ★ 是 data-chid，不是 chid
+         .is_fav                           ← ★ 收藏是靠这个 class 判断
+         .avatar > img                     ← 头像是真 img，src 是缩略图
+         .character_select_container
+           .character_name_block > .ch_name
+           .ch_additional_info             ← 版本号 / 头像文件名 / +++
+           .ch_assistant
+           .ch_fav_icon  +  input.ch_fav
+           .ch_description                 ← creator_notes
+           .tags > .tag
+   容器里除了 .character_select 还可能出现：group block、tag 文件夹 block、
+   back block、empty block、hidden block —— 所以**不能**用 :nth-child 定位主图，
+   必须由 JS 挑出"第 1 个 / 第 5 个 .character_select"再加 class。
+
+   【原生样式为什么必须用 !important 抢】
+     style.css:1406  .avatar{width:var(--avatar-base-width);height:var(--avatar-base-height);
+                             flex:1;border-radius:圆形}
+     style.css:1450  .avatar img{width:...;height:...;border-radius:圆形;
+                                 border:1px solid;box-shadow:0 0 5px}
+     style.css:3285  .character_select{display:flex;flex-direction:row;padding:5px}
+     style.css:2913  #rm_print_characters_block{display:flex;overflow-y:auto;padding:1px}
+   这四条全是"横向小圆头像 + 竖排列表"，跟卡片墙完全反着来，光靠优先级不够。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 墙面：竖排列表 → 网格 ── */
+#rm_print_characters_block.mf-wall {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 152px;
+  grid-auto-flow: dense;
+  gap: 10px;
+  align-content: start;
+  padding: 2px 12px 22px !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* ★ 原生带 flex-grow:1 + height:100%，外层是 flex column。
+     在 flex 子项上加 min-height:0，否则内容超过父高时不会出滚动条，
+     而是把父容器顶出去（整页跟着滚）。 */
+  min-height: 0;
+}
+
+/* ── 格子：横条 → 竖卡片 ──
+   ★★ 2026-11-13 22:1x 关键修复：这里**必须用 grid，不能用 flex column**。
+   原来写 flex column + .avatar{flex:1 1 auto}，实机结果是：
+   头像被 <img> 的固有高（240×360 的 2:3 图 → 卡宽 130 时 195px）撑住不肯收缩，
+   26px 名字条被顶到卡片外面，然后被卡片的 overflow:hidden 裁掉 ——
+   于是「只有极个别的卡有名字」（只有跨两行的大格够高，名字条才落在卡内）。
+   换成 grid-template-rows: 1fr auto 之后：图行拿「剩余高度」，名字行拿它自己的 26px，
+   两个方向都是确定值，不存在收缩失败。 */
+#rm_print_characters_block.mf-wall > .character_select {
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) auto !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  align-items: stretch !important;
+  justify-items: stretch !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 !important;
+  margin: 0 !important;
+  /* ★ 原生 .flex-container 带 `gap:5px`。卡片从 flex 改成 grid 之后，
+     这个 gap 变成了「行间距」，图下方会凭空多出 5px 空白条（实测 121+5+26=152）。
+     必须清掉。 */
+  gap: 0 !important;
+  row-gap: 0 !important;
+  column-gap: 0 !important;
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--mf-paper, #fbf9f4);
+  /* 静止时只有一层极淡的投影 —— 用户没选动效，hover 只加深阴影、不位移 */
+  box-shadow: 0 1px 3px rgba(90, 74, 48, .09), 0 1px 1px rgba(90, 74, 48, .04);
+  transition: box-shadow .16s ease;
+  cursor: pointer;
+}
+#rm_print_characters_block.mf-wall > .character_select:hover {
+  background: var(--mf-paper, #fbf9f4) !important;
+  box-shadow: 0 3px 12px rgba(90, 74, 48, .16), 0 1px 3px rgba(90, 74, 48, .07);
+}
+/* 选中态：砖红一圈。跟 charcard_list_v3 同一套 ——
+   ★ 别改回金色，用户 2026-11-13 明确说"金色太廉价"。 */
+#rm_print_characters_block.mf-wall > .character_select.mf-on,
+#rm_print_characters_block.mf-wall > .character_select.selected {
+  box-shadow: 0 0 0 1.5px var(--mf-wall-accent, #9c4a35),
+              0 2px 8px rgba(156, 74, 53, .16) !important;
+}
+
+/* ── 头像：小圆块 → 满铺的图 ──
+   ★ .avatar 原生带 flex:1 + 固定宽高 + 圆形圆角，img 还带 1px 描边和投影。
+     四样全部要抹掉，否则卡片里会出现一个小圆头像浮在中间。
+   ★ height 给 100%：父级是 grid 的第一行（minmax(0,1fr)），高度是确定值，
+     这里写 100% 才能让 img 老老实实跟着行高走。 */
+#rm_print_characters_block.mf-wall > .character_select > .avatar {
+  grid-row: 1;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: none !important;
+  align-self: stretch !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+  padding: 0 !important;
+  margin: 0 !important;
+  /* 相纸留白：图内侧一圈极细白边，像打印出来的照片压在卡纸上 */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5);
+  /* ★ 原生 style.css:3470 有 `.character_select.is_fav .avatar{outline:2px solid var(--golden)}`，
+     --golden = rgb(248,211,0) 亮柠檬黄。收藏卡会因此被套一圈刺眼黄边 ——
+     用户 2026-11-13 明确说过"金色太廉价"，这里必须清掉，收藏态改由右上角的小星标表达。 */
+  outline: none !important;
+}
+#rm_print_characters_block.mf-wall > .character_select > .avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  /* ★ 12% 偏上：角色卡的构图人脸基本都在上半部，居中会把下巴裁掉 */
+  object-position: 50% 12%;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  display: block;
+}
+
+/* ── 名字条：图下方一条白带 ──
+   ★ grid 第二行（auto），高度由 .ch_name 的 26/30 决定。
+     原生这个容器带 .flex-container（display:flex, row）和 .wide100pLess70px
+     （width: calc(100% - 70px)）—— 后一条会让名字条比卡片窄一截，
+     所以 width 和 display 都必须抢回来。 */
+#rm_print_characters_block.mf-wall > .character_select > .character_select_container {
+  grid-row: 2;
+  display: block !important;
+  flex: none !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: hidden;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: var(--mf-paper, #fbf9f4);
+  /* ★ 原生 style.css:3353 给这个容器加了 position:relative。
+     它是 .ch_fav_icon 的"最近定位祖先"，会把星标从卡片右上角拽到名字行里
+     （实测：星标整颗跑进白条右侧）。必须打回 static，让星标认卡片的 relative。 */
+  position: static !important;
+}
+#rm_print_characters_block.mf-wall .character_name_block {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: static !important;
+}
+#rm_print_characters_block.mf-wall .ch_name {
+  display: block;
+  height: 26px;
+  line-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--mf-ink2, #79746a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#rm_print_characters_block.mf-wall > .character_select:hover .ch_name {
+  color: var(--mf-ink, #45413a);
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-on .ch_name,
+#rm_print_characters_block.mf-wall > .character_select.selected .ch_name {
+  color: var(--mf-wall-accent-deep, #85392a);
+  font-weight: 700;
+}
+
+/* 主界面只露「头像 + 名字」，其余全藏 —— 条数/热度/简介都在详情页里 */
+#rm_print_characters_block.mf-wall .ch_description,
+#rm_print_characters_block.mf-wall .tags,
+#rm_print_characters_block.mf-wall .ch_additional_info,
+#rm_print_characters_block.mf-wall .ch_assistant,
+#rm_print_characters_block.mf-wall .character_version,
+#rm_print_characters_block.mf-wall .ch_avatar_url {
+  display: none !important;
+}
+
+/* ── 收藏星标：原生是夹在名字行里的小星星，现在浮到图片右上角 ──
+   ★ 原生 style.css:3437 给了 `padding-right:54px` + `margin-left:-75px` +
+     `order:-1` + `filter:drop-shadow`。那个 54px 内边距会把星标撑成一个
+     54×19 的红色长条（实机截图里卡片右上角那条红块就是它）。
+     宽度、内边距、外边距必须一起清掉。 */
+#rm_print_characters_block.mf-wall .ch_fav_icon {
+  position: absolute !important;
+  top: 6px !important;
+  right: 6px !important;
+  left: auto !important;
+  z-index: 3;
+  width: 19px !important;
+  height: 19px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  order: 0 !important;
+  filter: none !important;
+  display: none;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  color: #fff !important;
+  background: var(--mf-wall-accent, #9c4a35);
+  box-shadow: 0 1px 4px rgba(80, 30, 18, .3);
+}
+#rm_print_characters_block.mf-wall > .character_select.is_fav .ch_fav_icon {
+  display: grid !important;
+}
+
+/* ── 2×2 主图 / 跨两行大格 ──
+   ★ 只写 grid-row 会让它变成一个横条（老坑，经验第 51.2 节）；
+     主图必须同时写 column 和 row。 */
+#rm_print_characters_block.mf-wall > .character_select.mf-hero {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-big {
+  grid-row: span 2;
+}
+/* 大格的名字条要跟着高一点，否则 240px 高的卡片配 26px 白条比例失衡 */
+#rm_print_characters_block.mf-wall > .character_select.mf-hero .ch_name,
+#rm_print_characters_block.mf-wall > .character_select.mf-big .ch_name {
+  height: 30px;
+  line-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ── 非角色块（分组/标签文件夹/空态/返回）不参与网格节奏，整行铺开 ── */
+#rm_print_characters_block.mf-wall > .character_group,
+#rm_print_characters_block.mf-wall > .bogus_folder_select,
+#rm_print_characters_block.mf-wall > .text_block,
+#rm_print_characters_block.mf-wall > .empty_block,
+#rm_print_characters_block.mf-wall > .hidden_block,
+#rm_print_characters_block.mf-wall > .back_block {
+  grid-column: 1 / -1;
+  grid-row: auto;
+}
+
+/* ── 窄屏（手机）：3 列在 390 宽下每格只有 ~114，比例刚好；
+   再窄就降到 2 列，不然名字全被省略号吃掉 ── */
+@media (max-width: 340px) {
+  #rm_print_characters_block.mf-wall {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 140px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   工具栏（角色面板顶部那一条）
+   ───────────────────────────────────────────────────────────────────────────
+   【真实结构（index.html:6372 起，2026-11-13 核对）】
+     #rm_characters_block.right_menu
+       #charListFixedTop
+         #rm_button_bar            ← 新建/导入/外链导入/建群 + #rm_buttons_container(扩展)
+                                      + #character_sort_order(select) + #rm_button_search
+         #form_character_search_form > #character_search_bar
+         .rm_tag_controls > .tags.rm_tag_filter / .rm_tag_bogus_drilldown
+       #rm_print_characters_pagination   ← #charListGridToggle / #bulkEditButton
+                                          + PaginationJS 注入的 .paginationjs
+       #rm_print_characters_block        ← 墙
+   【原生尺寸】#rm_button_bar .menu_button{width:1.7em;aspect-ratio:1}
+   #character_sort_order{flex:1;border-radius:5px}
+   .paginationjs-pages ul li a{border:1px solid 主题边框;border-radius:5px}
+   ───────────────────────────────────────────────────────────────────────────
+   ★ 只改外观，不动结构、不改事件。所有选择器都挂在 #rm_characters_block 下，
+     所以不会漏到其它面板。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#rm_characters_block #charListFixedTop {
+  padding: 10px 14px 6px;
+}
+
+#rm_characters_block #rm_button_bar {
+  gap: 6px;
+}
+
+/* 图标按钮：原生是 1.7em 的方块、无边框。改成 30×30 的纸片 */
+#rm_characters_block #rm_button_bar .menu_button,
+#rm_characters_block #rm_button_bar .right_menu_button {
+  width: 30px !important;
+  height: 30px !important;
+  aspect-ratio: auto !important;
+  margin: 0 !important;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--mf-paper, #fbf9f4);
+  border: 1px solid var(--mf-line, #e7e2d7);
+  color: var(--mf-ink2, #79746a);
+  font-size: 11.5px;
+  padding: 0 !important;
+  /* ★ .right_menu_button 原生带 filter:brightness(75%)，会把整颗按钮压成灰块；
+     hover 又是 brightness(150%)。都要清掉，改由我们自己的描边/字色表达状态。 */
+  filter: none !important;
+  box-shadow: none !important;
+  transition: color .16s ease, border-color .16s ease;
+}
+#rm_characters_block #rm_button_bar .menu_button:hover,
+#rm_characters_block #rm_button_bar .right_menu_button:hover {
+  color: var(--mf-ink, #45413a);
+  border-color: var(--mf-line2, #d9d3c5);
+  filter: none !important;
+}
+
+/* 排序下拉 */
+#rm_characters_block #character_sort_order {
+  height: 30px;
+  margin: 0 !important;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--mf-line, #e7e2d7);
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink2, #79746a);
+  font-size: 12px;
+  min-width: 0;
+}
+#rm_characters_block #character_sort_order:focus {
+  outline: none;
+  border-color: var(--mf-wall-accent, #9c4a35);
+}
+
+/* 搜索框 */
+#rm_characters_block #character_search_bar {
+  height: 30px;
+  margin: 8px 0 0 !important;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--mf-line, #e7e2d7);
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink, #45413a);
+  font-size: 12.5px;
+}
+#rm_characters_block #character_search_bar::placeholder {
+  color: var(--mf-ink3, #a9a49a);
+}
+#rm_characters_block #character_search_bar:focus {
+  outline: none;
+  border-color: var(--mf-wall-accent, #9c4a35);
+}
+
+/* 标签筛选 chips：去底色去边框，选中靠文字变砖红 + 一根细下划线 */
+#rm_characters_block .rm_tag_controls {
+  margin-top: 8px;
+}
+#rm_characters_block .rm_tag_controls .tag {
+  padding: 3px 2px 2px !important;
+  margin: 0 8px 0 0 !important;
+  border: none !important;
+  border-bottom: 1px solid transparent !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--mf-ink2, #79746a);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+}
+#rm_characters_block .rm_tag_controls .tag:hover,
+#rm_characters_block .rm_tag_controls .tag.selected,
+#rm_characters_block .rm_tag_controls .tag.active {
+  color: var(--mf-wall-accent, #9c4a35) !important;
+  border-bottom-color: currentColor !important;
+}
+
+/* 分页条 */
+#rm_characters_block #rm_print_characters_pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 14px 8px;
+}
+#rm_characters_block #rm_print_characters_pagination .menu_button {
+  width: 26px !important;
+  height: 26px !important;
+  margin: 0 !important;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--mf-paper, #fbf9f4);
+  border: 1px solid var(--mf-line, #e7e2d7);
+  color: var(--mf-ink2, #79746a);
+  font-size: 10.5px;
+}
+#rm_characters_block #rm_print_characters_pagination .menu_button:hover {
+  color: var(--mf-ink, #45413a);
+  border-color: var(--mf-line2, #d9d3c5);
+}
+
+/* ★ 网格/列表切换钮：墙本身就是网格，原生那个开关按下去只会把卡片压成
+   100px 宽（body.charListGrid 的 max-width:100px），纯属反向操作。
+   用户 2026-11-13 拍板：藏掉。 */
+#rm_characters_block #charListGridToggle {
+  display: none !important;
+}
+
+/* PaginationJS 的页码块 */
+#rm_characters_block .paginationjs {
+  gap: 6px;
+}
+#rm_characters_block .paginationjs-nav {
+  padding: 0 !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  color: var(--mf-ink3, #a9a49a);
+}
+#rm_characters_block .paginationjs-pages ul {
+  margin: 0 !important;
+  gap: 4px;
+}
+#rm_characters_block .paginationjs-pages ul li a {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--mf-line, #e7e2d7);
+  border-radius: 7px;
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink2, #79746a);
+  font-size: 10.5px;
+  opacity: 1;
+}
+#rm_characters_block .paginationjs-pages ul li a:hover {
+  border-color: var(--mf-line2, #d9d3c5);
+  color: var(--mf-ink, #45413a);
+}
+#rm_characters_block .paginationjs-pages ul li.active a {
+  border-color: var(--mf-wall-accent, #9c4a35);
+  background: var(--mf-wall-accent-soft, #faf0ec);
+  color: var(--mf-wall-accent-deep, #85392a);
+}
+#rm_characters_block .paginationjs-pages ul li.disabled a {
+  opacity: .45;
+}
+#rm_characters_block .paginationjs-size-changer select {
+  height: 24px;
+  margin: 0 !important;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: 1px solid var(--mf-line, #e7e2d7);
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink2, #79746a);
+  font-size: 11px;
+}
+
+/* PaginationJS 的「上/下一页」是两个独立 <a>（showPageNumbers:false，不会有页码列表） */
+#rm_characters_block .paginationjs-prev,
+#rm_characters_block .paginationjs-next {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--mf-line, #e7e2d7);
+  border-radius: 7px;
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink2, #79746a);
+  font-size: 10.5px;
+  text-decoration: none;
+  cursor: pointer;
+}
+#rm_characters_block .paginationjs-prev:hover,
+#rm_characters_block .paginationjs-next:hover {
+  border-color: var(--mf-line2, #d9d3c5);
+  color: var(--mf-ink, #45413a);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   顶部工具栏折叠（v2.3.1 · 2026-11-13 22:3x）
+   ───────────────────────────────────────────────────────────────────────────
+   【用户口径】
+   「上面的按钮还是有啊。还有你上面不要堆那么多，不然的话手机界面会很别扭」
+   「把它先隐藏，或者把它们折叠收到一块儿」
+   → 默认只留一行（搜索框 + ⋯），四批全收进 ⋯ 里，点开才展开。
+
+   【收起的是哪四批（都在 #rm_characters_block 里，不会漏到别的面板）】
+     1. #rm_button_bar        新建/导入/外链导入/建群/扩展 + 排序下拉 + 搜索切换
+     2. .rm_tag_controls      标签 chips
+     3. #rm_print_characters_pagination   批量编辑 + 翻页 + 每页条数
+     4. （第 4 批是搜索框，保留常显 —— 找角色是主操作，收了反而更难用）
+
+   【为什么展开态要显式写回 display】
+   原生值查过了（style.css）：
+     #rm_button_bar{display:flex}            :2935
+     #rm_print_characters_pagination{display:flex}  :2869
+     .rm_tag_controls 原生没有规则 → block
+   ★ 不能用 display:revert —— revert 是跳过作者样式回到 UA 默认，
+     这里会被退回成 block，按钮条当场散架。
+
+   【为什么把 ⋯ 塞进 #form_character_search_form】
+   那个 div 原生就是 display:flex（style.css:3204），把按钮 append 进去
+   自动就是"搜索框 + 按钮"一行，不用绝对定位、不用算 top 偏移，
+   搜索框加 flex:1 就能自然让位。绝对定位那套在字号/行高变化时会飘。
+
+   【接管标记】
+     #rm_characters_block.mf-tools        JS 已生效（没收起态就说明脚本没跑，
+                                          此时保持酒馆原生外观，绝不半残）
+     #rm_characters_block.mf-tools-open   用户点开了 ⋯
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ⋯ 按钮：和搜索框同高、同款纸片描边 */
+#rm_characters_block #mf-tools-toggle {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--mf-paper, #fbf9f4);
+  border: 1px solid var(--mf-line, #e7e2d7);
+  color: var(--mf-ink2, #79746a);
+  cursor: pointer;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+#rm_characters_block #mf-tools-toggle:hover {
+  color: var(--mf-ink, #45413a);
+  border-color: var(--mf-line2, #d9d3c5);
+}
+#rm_characters_block #mf-tools-toggle svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+/* 收起态显示「⋯」，展开态显示「×」 */
+#rm_characters_block #mf-tools-toggle .mf-ico-close {
+  display: none;
+}
+#rm_characters_block.mf-tools-open #mf-tools-toggle .mf-ico-more {
+  display: none;
+}
+#rm_characters_block.mf-tools-open #mf-tools-toggle .mf-ico-close {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+#rm_characters_block.mf-tools-open #mf-tools-toggle {
+  color: var(--mf-wall-accent, #9c4a35);
+  border-color: var(--mf-wall-accent, #9c4a35);
+  background: var(--mf-wall-accent-soft, #faf0ec);
+}
+
+/* 搜索框让位：原生是 width100p + form 是 flex */
+#rm_characters_block.mf-tools #form_character_search_form {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  column-gap: 8px;
+}
+#rm_characters_block.mf-tools #character_search_bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+/* ── 收起态：四批全藏 ── */
+#rm_characters_block.mf-tools:not(.mf-tools-open) #rm_button_bar {
+  display: none !important;
+}
+#rm_characters_block.mf-tools:not(.mf-tools-open) .rm_tag_controls {
+  display: none !important;
+}
+#rm_characters_block.mf-tools:not(.mf-tools-open) #rm_print_characters_pagination {
+  display: none !important;
+}
+/* 收起后搜索框上方不留多余空隙（原生 padding 是按四行排的） */
+#rm_characters_block.mf-tools:not(.mf-tools-open) #charListFixedTop {
+  padding: 10px 14px 8px;
+}
+#rm_characters_block.mf-tools:not(.mf-tools-open) #form_character_search_form {
+  margin: 0 !important;
+}
+#rm_characters_block.mf-tools:not(.mf-tools-open) #character_search_bar {
+  margin: 0 !important;
+}
+
+/* ── 展开态：写回原生 display ── */
+#rm_characters_block.mf-tools-open #rm_button_bar {
+  display: flex !important;
+}
+#rm_characters_block.mf-tools-open .rm_tag_controls {
+  display: block !important;
+}
+#rm_characters_block.mf-tools-open #rm_print_characters_pagination {
+  display: flex !important;
+}
+/* 展开时搜索框回到第二行（和原顺序一致：按钮条在上、搜索在下） */
+#rm_characters_block.mf-tools-open #rm_button_bar {
+  margin-bottom: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   模块 11 · 角色详情页（滑入层）
+   ───────────────────────────────────────────────────────────────────────────
+   【从哪来】
+   charcard_detail_v3.html 是用户逐条拍过的原型（封面 20vh / 名字在图下 /
+   标签无边框 / 聊天列表点哪段进哪段）。这里只做「外壳移植」：
+     原型 .app          → #mf-detail .mfd-app
+     原型 --accent 系列 → --mfd-accent 系列（避免和 skin.css 的 --mf-accent 打架）
+     原型 html[data-theme] → body.dark（酒馆切暗色是给 body 加 .dark）
+   ★ 结构（封面/信息/三口径/聊天列表/dock）一个都没重排，别顺手"优化"。
+
+   【为什么是 fixed 全屏而不是塞进右侧抽屉】
+   酒馆右侧 #right-nav-panel 只有 ~400px，还是可拖拽的 drawer；详情页要放
+   20vh 的封面 + 三段卡 + 聊天列表，塞进去必挤。所以做成覆盖全屏的
+   独立层，桌面居中 700、手机满屏 —— 和原型看到的一模一样。
+
+   【层级】
+   z-index 要压过酒馆的 #right-nav-panel(≈1000) 和 popup(≈3000)。
+   取 12000，并留 --mfd-z 方便以后调。
+
+   【动画】
+   位移做在 #mf-detail 自己身上（不是 .mfd-app），这样 mask 和卡片一起进出，
+   不会出现"卡片滑走了但遮罩还在"的半截状态。
+   ★ 位移层必须 overflow:hidden，否则 translateX(100%) 会撑出横向滚动条。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═════ 2026-11-13 23:2x 重大修正：详情页 = 右抽屉里的一层，不是整屏 ═════
+   【用户原话】
+   「原本是角色列表，原本的界面就是在右边，就算你进入二级面，那它的界面也只是
+     覆盖角色列表那里，但是你却直接把它放在了中间，而且它的两边根本不是空白，
+     它是被拉长那种空白，这跟屎一样。」
+   → 角色墙本来就是酒馆右侧那个抽屉（#right-nav-panel）。点角色进二级页，
+     应该像原生钻取一样「在抽屉里换一页」，而不是铺满整个窗口。
+
+   【几何从哪来】
+   抽屉的真实尺寸不是固定 400px，是 (100dvw - --sheldWidth - 2px)/2
+   （style.css:5624，--sheldWidth 默认 50vw，用户拖过聊天宽度就会变），
+   而且抽屉还能被拖拽/最大化。所以**不用 CSS 算，直接抄抽屉的
+   getBoundingClientRect()**（JS 里 mfSyncBox()），一个像素都不猜。
+   这里给的是兜底值：JS 万一没跑到，至少还落在右边同一列。
+
+   【动画】
+   层的宽度 = 抽屉宽度，所以 translateX(100%) 正好滑出右边缘，跟抽屉滑入同方向。 */
+#mf-detail {
+  --mfd-z: 12000;
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: auto;
+  width: calc((100dvw - var(--sheldWidth, 50vw) - 2px) / 2);
+  height: 100dvh;
+  z-index: var(--mfd-z);
+  display: flex;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform .34s cubic-bezier(.22, .61, .36, 1), visibility .34s;
+  -webkit-tap-highlight-color: transparent;
+}
+#mf-detail.mfd-in {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* ── 主题变量：浅色跟角色墙同一套米白纸，暗色跟酒馆 dark 走 ── */
+#mf-detail {
+  --mfd-sans: -apple-system, "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mfd-serif: Georgia, "Times New Roman", "Songti SC", SimSun, serif;
+  --mfd-kai: "KaiTi", "STKaiti", "Kaiti SC", "Songti SC", serif;
+
+  --mfd-bg: #e9e4d9;
+  --mfd-card: #fffefb;
+  --mfd-card2: #f9f5ec;
+  --mfd-cardS: #f2ecdf;
+  --mfd-ink: #221c15;
+  --mfd-ink2: #6d6455;
+  --mfd-ink3: #a2968a;
+  --mfd-line: rgba(60, 48, 30, .10);
+  --mfd-line2: rgba(60, 48, 30, .20);
+  --mfd-accent: #9c4a35;
+  --mfd-accentL: #c98b78;
+  --mfd-accentD: #85392a;
+  --mfd-accentSoft: #faf0ec;
+  --mfd-ctaBg: linear-gradient(135deg, #3a3222 0%, #231d13 58%, #15100a 100%);
+  --mfd-ctaInk: #f9f3e6;
+  --mfd-sh: 0 20px 56px rgba(90, 74, 48, .14);
+  --mfd-dim: blur(46px) saturate(1.05) brightness(.95);
+  --mfd-mask: rgba(28, 24, 18, .42);
+}
+body.dark #mf-detail {
+  --mfd-bg: #08080a;
+  --mfd-card: #0d0d11;
+  --mfd-card2: #131319;
+  --mfd-cardS: #191920;
+  --mfd-ink: #f4eee2;
+  --mfd-ink2: #a79c8c;
+  --mfd-ink3: #6b635a;
+  --mfd-line: rgba(255, 255, 255, .10);
+  --mfd-line2: rgba(255, 255, 255, .20);
+  /* 暗色下砖红要提亮，否则在 #08080a 上糊成一团黑红（原型里踩过） */
+  --mfd-accent: #c9755c;
+  --mfd-accentL: #e0a891;
+  --mfd-accentD: #d98a70;
+  --mfd-accentSoft: rgba(201, 117, 92, .13);
+  /* 暗底上主按钮用反白，比再插一个饱和色克制 */
+  --mfd-ctaBg: linear-gradient(135deg, #f2ebdb 0%, #ded4bf 100%);
+  --mfd-ctaInk: #1a1610;
+  --mfd-sh: 0 24px 70px rgba(0, 0, 0, .6);
+  --mfd-dim: blur(46px) saturate(1.1) brightness(.5);
+  --mfd-mask: rgba(0, 0, 0, .55);
+}
+
+#mf-detail .mfd-mask {
+  position: absolute;
+  inset: 0;
+  /* ★★ 2026-11-13 22:5x 改成透明（原来 rgba(28,24,18,.42)）。
+     用户原话：「我点开这个角色详细面给我出在了最中间」——
+     一是指卡片 700 宽居中像个弹窗，二是滑入那一瞬间遮罩已经把酒馆
+     整页压暗了，卡片像浮在暗底上的弹层。
+     现在详情页是**整页接管**（.mfd-app 满宽），下面根本看不到酒馆，
+     遮罩没有任何视觉作用；留着这层深色只会在动画头 0.34s 里闪一下黑。
+     元素保留 = 保留点击关闭的兜底路径，只是不着色。 */
+  background: transparent;
+}
+
+/* 卡面：铺满这一层（层本身已经等于抽屉大小，这里不再自己算宽度） */
+#mf-detail .mfd-app {
+  position: relative;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--mfd-bg);
+  color: var(--mfd-ink);
+  box-shadow: none;
+  font: 14px/1.6 var(--mfd-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* 退出后要真的从合成里摘掉。
+   ★ 只靠 translateX(100%) 留一层满屏的合成层，WebView2 里滚角色列表会明显发滞
+   　（用户原话「一退出就卡」）。所以关上 0.4s 后 display:none。 */
+#mf-detail.mfd-hide { display: none; }
+
+/* ★★ 纸纹整块删掉了（2026-11-13 22:5x）。
+   原来这里是 ::before + inset:0 + z-index:200 + mix-blend-mode:multiply 的噪点。
+   mix-blend-mode 会让 .mfd-app 整个子树进混合组，Chromium/WebView2 里等于
+   每帧重算一遍满屏混合 —— 表现就是「点不动、一退出就卡」。
+   用户已经明确说卡到不能用，纹理由此舍弃，绝不为了那 4.5% 的噪点换流畅度。 */
+
+/* ═════ 封面：只有 20vh ═════ */
+#mf-detail .mfd-banner {
+  position: relative;
+  flex: none;
+  height: 20vh;
+  min-height: 132px;
+  max-height: 210px;
+  overflow: hidden;
+  background: #cfc7b4;
+  isolation: isolate;
+}
+#mf-detail .mfd-banner .mfd-dim {
+  position: absolute;
+  inset: -10%;
+  background-size: cover;
+  background-position: 50% 30%;
+  filter: var(--mfd-dim);
+}
+#mf-detail .mfd-banner img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 20vh 只露脸的上半截，往上是刻意的，别改成 center */
+  object-position: 50% 16%;
+}
+#mf-detail .mfd-banner .mfd-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .10;
+  /* ★ 去掉 mix-blend-mode:overlay（2026-11-13 23:1x）。
+     整页那层噪点已经因为"卡"删了，这层留着同样的混合模式还是会拉一个混合组，
+     而它盖的是一张会随窗口重排的大图。颗粒感留着，混合不要。 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+#mf-detail .mfd-banner .mfd-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56%;
+  /* ★ 终点必须是正文底色 var(--mfd-bg)，不能是卡片白 var(--mfd-card)。
+     实拍量过：终点写白色时收到 (248,248,243)，正文是 (233,228,217)，
+     接缝处横贯一条亮线；换成同色后两段直接接上。 */
+  background: linear-gradient(180deg, transparent 20%, rgba(233, 228, 217, .55) 72%, var(--mfd-bg) 100%);
+}
+body.dark #mf-detail .mfd-banner .mfd-fade {
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .34));
+}
+
+/* 顶部浮层按钮 */
+#mf-detail .mfd-topbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 58px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  pointer-events: none;
+  gap: 8px;
+}
+#mf-detail .mfd-topbar > * { pointer-events: auto; }
+#mf-detail .mfd-back,
+#mf-detail .mfd-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  font: 600 12.5px/1 var(--mfd-sans);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .28);
+  /* ★ 去掉 backdrop-filter：这层叠在满屏 transform 动画上，WebView2 里
+     每帧都要重新取背景做模糊，是「一退出就卡」的另一半原因。改成实色。 */
+  background: rgba(24, 22, 18, .58);
+  cursor: pointer;
+  transition: background .16s;
+}
+#mf-detail .mfd-edit { padding: 0 12px; }
+#mf-detail .mfd-back:hover,
+#mf-detail .mfd-edit:hover { background: rgba(24, 22, 18, .62); }
+#mf-detail .mfd-back svg,
+#mf-detail .mfd-edit svg { width: 14px; height: 14px; flex: none; }
+
+/* ═════ 内容区 ═════ */
+#mf-detail .mfd-content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mfd-line2) transparent;
+  /* ★ 正文列不能用 max-width + margin:auto 来居中 —— 那样滚动条会贴在
+     那条 760 列的右边、跑到屏幕中间变成一根竖线（实拍见过）。
+     改成「容器满宽当滚动容器，用左右 padding 把内容挤进 760 列」，
+     滚动条才会老实待在窗口最右边。 */
+  width: 100%;
+}
+/* ★ 不写这条，flex 子项会被压成 0 高（原型踩过，经验 44.4） */
+#mf-detail .mfd-content > * { flex: 0 0 auto; }
+#mf-detail .mfd-content::-webkit-scrollbar { width: 7px; }
+#mf-detail .mfd-content::-webkit-scrollbar-thumb {
+  background: var(--mfd-line2);
+  border-radius: 4px;
+}
+
+#mf-detail .mfd-idline { margin: 0 0 2px; }
+#mf-detail .mfd-idline h2 {
+  margin: 0;
+  font-family: var(--mfd-serif);
+  font-size: 26px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: .06em;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--mfd-ink);
+}
+#mf-detail .mfd-idline h2 .mfd-ver {
+  font: 11px/1 var(--mfd-serif);
+  color: var(--mfd-ink3);
+  letter-spacing: .1em;
+  font-weight: 400;
+}
+#mf-detail .mfd-tagline {
+  margin: 7px 0 0;
+  font-size: 13px;
+  color: var(--mfd-accentD);
+  letter-spacing: .05em;
+}
+#mf-detail .mfd-byline {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--mfd-ink3);
+  letter-spacing: .02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mf-detail .mfd-desc {
+  margin: 14px 0 0;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.95;
+  color: var(--mfd-ink2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 标签：无边框无底色，只用中间的点隔开（原型口径） */
+#mf-detail .mfd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  margin: 12px 0 0;
+}
+#mf-detail .mfd-tags span {
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  color: var(--mfd-ink3);
+  letter-spacing: .08em;
+}
+#mf-detail .mfd-tags span + span::before {
+  content: "·";
+  margin: 0 7px;
+  color: var(--mfd-line2);
+}
+
+/* ═════ 三口径 ═════ */
+#mf-detail .mfd-freq { margin: 17px 0 0; }
+#mf-detail .mfd-fhead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 9px;
+}
+#mf-detail .mfd-fhead .lbl {
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--mfd-ink3);
+  font-weight: 600;
+}
+#mf-detail .mfd-fhead .rank {
+  font: 11px/1 var(--mfd-serif);
+  color: var(--mfd-accentD);
+  letter-spacing: .06em;
+  flex: none;
+}
+#mf-detail .mfd-fhead i {
+  flex: 1;
+  height: 1px;
+  background: var(--mfd-line);
+  min-width: 8px;
+}
+#mf-detail .mfd-mtx {
+  display: grid;
+  /* ★ 不是写死 repeat(3)：抽屉宽度 = (100dvw - --sheldWidth)/2，1920 窗口下 479（三张够放），
+     但 1360 的窗口只有 339，三张各 100 出头「2026-11-13 13:23」这种日期会顶出卡边。
+     用 minmax(120px) + auto-fit：479 时还是三列（原样不变），窄到放不下自动变两列。 */
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 7px;
+}
+#mf-detail .mfd-mx {
+  padding: 10px 11px 9px;
+  border-radius: 8px;
+  min-width: 0;
+  background: var(--mfd-card2);
+}
+#mf-detail .mfd-mx .mk {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--mfd-ink3);
+  line-height: 1;
+  display: block;
+}
+#mf-detail .mfd-mx .mv {
+  margin: 7px 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  min-width: 0;
+  font: 20px/1.05 var(--mfd-serif);
+  color: var(--mfd-ink);
+}
+#mf-detail .mfd-mx .mv em {
+  font: 10px/1 var(--mfd-serif);
+  color: var(--mfd-ink3);
+  font-style: normal;
+}
+#mf-detail .mfd-mx .mb {
+  margin: 7px 0 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mfd-cardS);
+  overflow: hidden;
+}
+#mf-detail .mfd-mx .mb i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--mfd-accent);
+  min-width: 2px;
+  width: 0;
+  transition: width .5s cubic-bezier(.22, .61, .36, 1);
+}
+#mf-detail .mfd-mx .ms {
+  margin: 5px 0 0;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: var(--mfd-ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ═════ 聊天记录 ═════ */
+#mf-detail .mfd-sechead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 20px 0 9px;
+}
+#mf-detail .mfd-sechead .lbl {
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--mfd-ink3);
+  font-weight: 600;
+}
+#mf-detail .mfd-sechead .cnt {
+  font: 11px/1 var(--mfd-serif);
+  color: var(--mfd-accentD);
+  letter-spacing: .06em;
+}
+#mf-detail .mfd-sechead i {
+  flex: 1;
+  height: 1px;
+  background: var(--mfd-line);
+}
+
+#mf-detail .mfd-segs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#mf-detail .mfd-seg {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px 11px 13px;
+  border-radius: 11px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--mfd-card2);
+  transition: background .14s, border-color .14s;
+}
+#mf-detail .mfd-seg:hover { background: var(--mfd-cardS); border-color: var(--mfd-line); }
+#mf-detail .mfd-seg::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--mfd-accent);
+  opacity: 0;
+  transition: opacity .14s;
+}
+#mf-detail .mfd-seg.on {
+  background: var(--mfd-accentSoft);
+  border-color: rgba(156, 74, 53, .32);
+}
+#mf-detail .mfd-seg.on::before { opacity: 1; }
+#mf-detail .mfd-seg .sn {
+  flex: none;
+  width: 22px;
+  padding-top: 1px;
+  font: 12px/1.2 var(--mfd-serif);
+  color: var(--mfd-ink3);
+  text-align: right;
+}
+#mf-detail .mfd-seg.on .sn { color: var(--mfd-accentD); }
+#mf-detail .mfd-seg .sb { flex: 1; min-width: 0; }
+#mf-detail .mfd-seg .st {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+#mf-detail .mfd-seg .st b {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--mfd-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 58%;
+}
+#mf-detail .mfd-seg .st em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--mfd-ink3);
+  flex: none;
+}
+#mf-detail .mfd-seg .st .dot { color: var(--mfd-line2); font-size: 10px; flex: none; }
+#mf-detail .mfd-seg .ss {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--mfd-ink2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 摘要用楷体，和正文区分，有"小说"味 */
+  font-family: var(--mfd-kai);
+}
+#mf-detail .mfd-seg .sd {
+  flex: none;
+  text-align: right;
+  font: 11px/1.5 var(--mfd-serif);
+  color: var(--mfd-ink3);
+  padding-top: 1px;
+}
+#mf-detail .mfd-seg.on .sd { color: var(--mfd-accentD); }
+
+#mf-detail .mfd-empty {
+  padding: 16px;
+  border-radius: 11px;
+  border: 1px dashed var(--mfd-line2);
+  text-align: center;
+  font-size: 12px;
+  color: var(--mfd-ink3);
+}
+#mf-detail .mfd-tail { height: 4px; }
+
+/* ═════ 底部 dock ═════ */
+#mf-detail .mfd-dock {
+  flex: none;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 11px 20px calc(13px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--mfd-line);
+  background: var(--mfd-card);
+  position: relative;
+}
+#mf-detail .mfd-dock::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -24px;
+  height: 24px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--mfd-card));
+}
+#mf-detail .mfd-cta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 50px;
+  border-radius: 13px;
+  background: var(--mfd-ctaBg);
+  color: var(--mfd-ctaInk);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 26px rgba(50, 40, 24, .22), inset 0 1px 0 rgba(255, 255, 255, .14);
+  transition: transform .14s, filter .14s;
+}
+#mf-detail .mfd-cta:hover { transform: translateY(-1px); filter: brightness(1.05); }
+#mf-detail .mfd-cta:active { transform: translateY(0) scale(.995); }
+#mf-detail .mfd-cta .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#mf-detail .mfd-cta .n { font: 11px/1 var(--mfd-serif); opacity: .72; }
+#mf-detail .mfd-cta svg { width: 16px; height: 16px; flex: none; }
+#mf-detail .mfd-newbtn {
+  flex: none;
+  width: 50px;
+  height: 50px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--mfd-line2);
+  background: var(--mfd-card2);
+  color: var(--mfd-ink2);
+  cursor: pointer;
+  transition: background .14s, border-color .14s, color .14s, transform .14s;
+}
+#mf-detail .mfd-newbtn:hover {
+  background: var(--mfd-accentSoft);
+  border-color: var(--mfd-accentL);
+  color: var(--mfd-accentD);
+  transform: translateY(-1px);
+}
+#mf-detail .mfd-newbtn svg { width: 18px; height: 18px; }
+
+/* ═════ 尺寸口径：这一层永远只有「右抽屉那么宽」 ═════
+   ★ 2026-11-13 23:2x：原来这里是 @media(max-width:900px) 窄屏 + @media(min-width:901px) 宽屏两套。
+   现在详情层被钉成右抽屉大小（约 500，见文件顶部 #mf-detail 的说明），
+   视口再宽这一层也是窄的，所以媒体查询按视口判断已经没意义 ——
+   把原来那套「窄屏」参数直接常开，宽屏那套（340 高封面 / 虚化铺底 / 760 正文列）整块删掉。
+   用户要的就是「跟角色列表一样宽的一页」，宽屏专属排版反而不该存在。 */
+#mf-detail .mfd-app { box-shadow: none; }
+#mf-detail .mfd-content { padding: 14px 16px 16px; }
+#mf-detail .mfd-dock { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); }
+#mf-detail .mfd-idline h2 { font-size: 23px; }
+#mf-detail .mfd-desc { -webkit-line-clamp: 2; }
+#mf-detail .mfd-mtx { gap: 6px; }
+#mf-detail .mfd-mx { padding: 8px 9px 7px; }
+#mf-detail .mfd-mx .mv { font-size: 17px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   模块 12 · 面板顶部折叠（样式部分）
+   ───────────────────────────────────────────────────────────────────────────
+   和 _fold_module.js 成对使用。JS 只负责「加 class + 插一个 ⋯ 按钮」，
+   显隐全部在这里，所以出问题时把 skin.css 的这一段删掉就能立刻回到原样。
+
+   【为什么收起态要 display:none!important】
+   酒馆的 .flex-container 是 !important 级别以下的 flex 规则，
+   但 #wiTopBlock 里还有 inline 的 style 可能性，所以收起用 !important。
+   展开态**必须显式写回 flex** —— 不能用 revert（会退回 block，多选拉不齐）。
+
+   【为什么按钮用 margin-left:auto】
+   标题行是 .flex-container.alignitemscenter.gap10px，本来的排布是
+   「锁 + 标题」，把按钮 append 进去再用 auto margin 顶到最右，
+   不用绝对定位、也不用改标题行的结构。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ⋯ 按钮（世界书 / 预设共用） ── */
+#WorldInfo .mf-fold-btn,
+.mf-fold-btn {
+  flex: none;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--mf-paper, #fbf9f4);
+  border: 1px solid var(--mf-line, #e7e2d7);
+  color: var(--mf-ink2, #79746a);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+#WorldInfo .mf-fold-btn:hover,
+.mf-fold-btn:hover {
+  color: var(--mf-ink, #45413a);
+  border-color: var(--mf-line2, #d9d3c5);
+}
+#WorldInfo .mf-fold-btn svg,
+.mf-fold-btn svg { width: 14px; height: 14px; display: block; }
+
+/* 展开时按钮点亮（砖红） */
+#WorldInfo.mf-wi-open .mf-fold-btn {
+  color: var(--mf-wall-accent, #9c4a35);
+  border-color: var(--mf-wall-accent, #9c4a35);
+  background: var(--mf-wall-accent-soft, #faf0ec);
+}
+
+/* ── 世界书：收起 / 展开 ── */
+#WorldInfo.mf-wi-fold:not(.mf-wi-open) #wiTopBlock {
+  display: none !important;
+}
+#WorldInfo.mf-wi-fold.mf-wi-open #wiTopBlock {
+  display: flex !important;
+}
+
+/* 收起后把顶部留白压掉：把手 + 标题 + 新建那行，省下的全给条目列表 */
+#WorldInfo.mf-wi-fold #WorldInfoheader {
+  height: 10px;
+  min-height: 10px;
+  margin-bottom: 0;
+}
+#WorldInfo.mf-wi-fold #wi-holder {
+  margin-top: 2px;
+}
+#WorldInfo.mf-wi-fold #world_popup > hr {
+  margin: 4px 0;
+}
+
+/* ── 预设（左栏 AI 响应配置）：收起 / 展开 ──
+   .mf-pv-hide 是 JS 精确标出来的节点（采样块 / 预设标题行 / 图标簇 / 提示条）。
+   ★ 只在"收起态"才隐藏 —— 展开态不用写任何"还原"规则，
+     因为隐藏条件本身带 :not(.mf-pv-open)。这样就不会踩 display:revert 的坑。 */
+#left-nav-panel.mf-pv-fold:not(.mf-pv-open) .mf-pv-hide {
+  display: none !important;
+}
+
+#left-nav-panel.mf-pv-fold #left-nav-panelheader {
+  height: 10px;
+  min-height: 10px;
+}
+
+/* 预设下拉那一行：下拉吃掉整行，⋯ 定在最右 */
+#left-nav-panel.mf-pv-fold select[id^="settings_preset"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#left-nav-panel.mf-pv-fold .mf-fold-btn {
+  margin-left: 6px;
+}
+#left-nav-panel.mf-pv-open .mf-fold-btn {
+  color: var(--mf-wall-accent, #9c4a35);
+  border-color: var(--mf-wall-accent, #9c4a35);
+  background: var(--mf-wall-accent-soft, #faf0ec);
+}
+

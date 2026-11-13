@@ -128,7 +128,7 @@
 
     if (window.__mfTavernSkin) return;              // 防重复执行
 
-    var VERSION = '1.9.2';
+    var VERSION = '2.0.10';
     var APP = window.__mfTavernSkin = { version: VERSION, modules: {} };
     var LOG = '[米白护眼]';
 
@@ -3855,14 +3855,20 @@
             if (hit) jumpTo(hit.dataset.book, hit.dataset.uid, hit.dataset.needle);
         });
 
-        /* 抽屉打开时后台预读，这样第一下输入就有结果 */
+        /* ★★ 2026-11-07 性能（用户报「卡成屎」的一号元凶）：
+           原来这里是「启动 2.5 秒后无条件 preload」+「抽屉 class 一变就 preload」。
+           而下面的世界书面板（mfWb）自己还有一套 loadAll、也读全部 17 本书 ——
+           一次打开抽屉 = 2.8MB × 2 全部 JSON.parse 一遍，主线程直接堵住。
+           实际上这个搜索框在 input 事件里自己就会 loadAll（见上面的输入处理），
+           预读完全多余。现在只在第一次点进搜索框时预读一次，抽屉打开时零 IO。 */
+        var preloaded = false;
         var preload = function () {
-            if (wi.classList.contains('closedDrawer')) return;
-            if (CACHE || LOADING) return;
+            if (preloaded || CACHE || LOADING) return;
+            preloaded = true;
             loadAll(false).catch(function () { });
         };
-        new MutationObserver(preload).observe(wi, { attributes: true, attributeFilter: ['class'] });
-        setTimeout(preload, 2500);
+        input.addEventListener('focus', preload);
+        input.addEventListener('click', preload);
     }
 
 
@@ -3982,9 +3988,10 @@
         }
 
         /* ── 状态 ─────────────────────────────────────────────────────────── */
-        var BOOKS = [];             /* [{name, on, pinned, data}] */
+        var BOOKS = [];             /* [{name, on, pinned, data, _stub?}] */
         var LOADING = null;
         var LOADED_AT = 0;
+        var PENDING = 0;            /* 还有几本书的内容没读回来（_stub 数量） */
         var view = 'list';
         var curName = null;
         var q = '';
@@ -4084,12 +4091,98 @@
              ② 失败自动重试 3 次（1.2s / 2.4s / 4.8s 退避）；
              ③ 3 次都失败 → 红字常驻 + 列表上给这本书挂「未保存」标签；
              ④ saving 标志挂超过 20s 强制作废，防止一次卡死之后永远不再保存。 */
-        function touch(name) {
+        /* ── 保存诊断（2026-11-07 加）────────────────────────────────────────
+           ★ 为什么加：用户报「新增条目 / 新建书，面板显示已保存，但酒馆原生里没有」。
+             硬证据（磁盘，不是界面）：worlds 目录 17 个文件，最后一次修改
+             停在 2026-11-05 20:18，11-06 升级到 ST 1.19 之后一直到 11-07
+             11:30 一个字节都没动过 → **根本没写盘**，「已保存」是假的。
+             而 11-05 在 ST 1.18 上新建成过一本（女版.json = { "entries": {} }），
+             说明这条链路以前是通的，1.19 之后才断。
+
+           ★ 代码里三处会「静默吞错」，任何一处命中都会显示已保存：
+             ① 本函数下面的 flush() 里 findBook 失败 → return Promise.resolve()，
+                一个请求都不发，Promise.all 依然成功；
+             ② ST 自己的 _save()（world-info.js）里 `await fetch(...)` 不检查
+                response.ok —— 服务端 400 / 403 也当成功返回；
+             ③ touch() 里 name 为空 → 根本不进 dirty，flush 看到空队列
+                立刻 setStatus('ok','已保存')。
+             后端已核对：1.18 与 1.19 的 src/endpoints/worldinfo.js 逐字节相同，
+             /edit 只校验 name 与 entries 存在就写文件 → 接口侧没变。
+
+           ★ 所以这里**不改保存行为**，只做三件事：
+             · 每次 touch / 每次 flush 记进 window.__mfWbDiag（名字、找到书没、
+               有没有 ctx.saveWorldInfo、真实读回条数）；
+             · 保存后主动 POST /api/worldinfo/get 读回来，与内存条数比对；
+             · 对不上就红字 + 首次 alert 详情，绝不再假装成功。
+
+           ★ 定位完、修好之后：诊断记录可以留着（几乎零开销），
+             但「读回核对」和「findBook 失败要报错」这两条**必须保留** ——
+             它们才是防止下次再骗人的闸。 */
+        var DIAG = (window.__mfWbDiag = window.__mfWbDiag || {
+            touches: [], saves: [], last: null, alerted: false, verified: false
+        });
+
+        /* 保存后读回核对：把磁盘真实条数和内存条数摆在一起 */
+        function verifyOnDisk(names) {
+            return Promise.all(names.map(function (nm) {
+                var b = findBook(nm);
+                var mem = (b && b.data && b.data.entries)
+                    ? Object.keys(b.data.entries).length : -1;
+                return apiPost('/api/worldinfo/get', { name: nm }).then(function (d) {
+                    var disk = (d && d.entries) ? Object.keys(d.entries).length : -1;
+                    return { name: nm, mem: mem, disk: disk, ok: (disk === mem) };
+                }).catch(function (e) {
+                    return {
+                        name: nm, mem: mem, disk: -2,
+                        ok: false, err: (e && e.message) ? e.message : String(e)
+                    };
+                });
+            }));
+        }
+
+        /* ★★★ 2026-11-07 v2.0.7：保存时机改成「攒着写」
+           ─ 用户实测（原话）：「连续关两个条目卡」「卡好几秒像死机」，
+             并明确授权：能接受改完不立刻写盘，只要别卡。
+           ─ 旧逻辑：任何一个字段改动 → 700ms 后 flush → saveWorldInfo(整本书)
+             → 整本 JSON.stringify + POST + 原生 emit(WORLDINFO_UPDATED) 写盘。
+             点灯停用一条只改 1 个布尔，却要重写整本 1MB 的书，
+             连续关两条 = 两次 1MB 写盘，跟「一条几百字节」完全不成比例。
+           ─ 现在分两档：
+             · markDirty（默认）：点灯 / 三方开关 / 改字段 / 关键词 → 只标脏，
+               攒到 8 秒或「切书 / 返回列表 / 关抽屉」时统一写一次；
+             · touchNow：新建 / 删除 / 复制条目、新建书 → 700ms 防抖，
+               结构改动不压在内存里等。
+           ⚠ 不要加 beforeunload 同步 flush：关酒馆本来就要写 5.6MB settings，
+             再叠一次整本世界书会让关窗更卡（用户报的就是「点 X 半天不消失」）。 */
+        var LAZY_SAVE_MS = 8000;
+
+        function markDirty(name) {
             if (!name) return;
             dirty[name] = true;
-            setStatus('on', '正在保存…');
+            if (stKind !== 'on') setStatus('on', '未保存 · 切书 / 关面板时写入');
+            /* 只排一次：连续改十几条不会反复重置定时器，也不会每改一次就写一次盘 */
+            if (!saveTimer) saveTimer = setTimeout(function () { saveTimer = 0; flush(); }, LAZY_SAVE_MS);
+        }
+
+        function touchNow(name) {
+            if (!name) return;
+            dirty[name] = true;
+            if (stKind !== 'on' || stText !== '正在保存…') setStatus('on', '正在保存…');
             clearTimeout(saveTimer);
-            saveTimer = setTimeout(flush, 700);
+            saveTimer = setTimeout(function () { saveTimer = 0; flush(); }, 700);
+        }
+
+        /* 旧调用点默认走懒保存（字段编辑、点灯这些高频操作） */
+        function touch(name) { markDirty(name); }
+
+        /* 切书 / 返回列表 / 关抽屉时立刻落盘 —— 用户「改完就走」的那几步不能丢 */
+        function flushNow() {
+            var has = false;
+            for (var k in dirty) if (dirty[k]) { has = true; break; }
+            if (!has) return;
+            clearTimeout(saveTimer);
+            saveTimer = 0;
+            flush();
         }
 
         function flush() {
@@ -4109,30 +4202,136 @@
 
             saving = true;
             savingSince = Date.now();
+            var tSave = nowMs();     /* v2.0.7 性能打点：整本序列化 + POST 的真实耗时 */
             setStatus('on', '正在保存…');
 
             var ctx = getCtx();
+            /* 诊断记录：这一批保存到底走了哪条路 */
+            var rec = {
+                at: Date.now(),
+                names: names.slice(),
+                hasCtx: !!ctx,
+                hasSaveWorldInfo: !!(ctx && ctx.saveWorldInfo),
+                notFound: [],
+                path: ''
+            };
             var jobs = names.map(function (nm) {
                 var b = findBook(nm);
-                if (!b || !b.data) return Promise.resolve();
+                if (!b || !b.data) {
+                    rec.notFound.push(nm);
+                    /* ★ 这里原来是 `return Promise.resolve()` —— 一个请求都不发，
+                       面板却照样报「已保存」。2026-11-07 诊断改成必须抛出来。 */
+                    return Promise.reject(new Error('面板里找不到这本书：' + nm));
+                }
                 if (ctx && ctx.saveWorldInfo) {
-                    /* ★ 走原生：同时更新 worldInfoCache 与 WORLDINFO_UPDATED 事件 */
+                    /* ★ 走原生：同时更新 worldInfoCache 与 WORLDINFO_UPDATED 事件
+                       ⚠ 但它的 _save() 不检查 response.ok，所以失败也会 resolve，
+                         真正的判据是下面 verifyOnDisk() 读回来的条数。 */
+                    if (!rec.path) rec.path = 'saveWorldInfo';
                     return Promise.resolve(ctx.saveWorldInfo(nm, b.data, true));
                 }
+                if (!rec.path) rec.path = 'apiPost';
                 return apiPost('/api/worldinfo/edit', { name: nm, data: b.data });
             });
 
             Promise.all(jobs).then(function () {
                 saving = false;
-                saveFail = 0;
-                setStatus('ok', '已保存');
-                /* 存成功了就把「未保存」标签摘掉（不重绘，免得打断正在打字的人） */
-                var bad = document.querySelectorAll('#mfWb .tag.unsaved');
-                if (bad.length) [].slice.call(bad).forEach(function (n) { n.remove(); });
-                setTimeout(function () {
-                    if (stKind === 'ok' && !Object.keys(dirty).length) setStatus('', '');
-                }, 1600);
-                if (Object.keys(dirty).length) flush();
+
+                /* ★ v2.0.7：把「写一本 1MB 的书到底要多久」量出来。
+                   只记进 window.__mfWbPerf，不打扰界面（保存慢单独看这条）。 */
+                try {
+                    var dtSave = Math.round(nowMs() - tSave);
+                    var p = window.__mfWbPerf || (window.__mfWbPerf = []);
+                    p.push({ act: 'save', ms: dtSave, at: Date.now(), path: rec.path, books: names.length });
+                    if (p.length > 40) p.shift();
+                    if (dtSave >= 1500) console.warn('[mf-wb] 保存耗时 ' + dtSave + 'ms', names, rec.path);
+                } catch (e) { }
+
+                /* ★ 2026-11-07 卡顿修复（用户实测：加了核对之后点抽屉要等一两秒）：
+                   verifyOnDisk 走 /api/worldinfo/get，会把**整本书**拉回本地再比条数。
+                   用户最大的世界书 1 MB，每存一次就是下行 1 MB + JSON.parse，
+                   正好赶上他点别的抽屉 → 主线程和网络被占住，点了像没反应。
+                   现在只核对**第一次**保存：链路通不通一次就能看出来，之后零额外开销。
+                   想再单独核对一次：控制台执行
+                       window.__mfWbDiag.verified = false
+                   再改一个字就会重新核对一遍。 */
+                function afterSave(rep) {
+                    rec.result = rep || null;
+                    DIAG.saves.push(rec);
+                    if (DIAG.saves.length > 20) DIAG.saves.shift();
+                    DIAG.last = rec;
+
+                    var mismatch = (rep || []).filter(function (r) { return !r.ok; });
+                    if (mismatch.length) {
+                        /* 数据没落盘：把书放回队列（不自动重试，避免空转），红字常驻 */
+                        mismatch.forEach(function (r) { dirty[r.name] = true; });
+                        var detail = mismatch.map(function (r) {
+                            var d = r.disk === -2 ? ('读不回：' + (r.err || '请求失败'))
+                                : (r.disk < 0 ? '读不回' : r.disk + ' 条');
+                            return '「' + r.name + '」面板 ' + r.mem + ' 条 / 磁盘 ' + d;
+                        }).join('\n');
+                        var route = rec.path || '没发请求'
+                            + (rec.hasSaveWorldInfo ? '' : '（拿不到 ctx.saveWorldInfo）');
+                        setStatus('err', '⚠ 没真写进酒馆：' + mismatch.map(function (r) {
+                            return r.name;
+                        }).join('、') + '（走 ' + route + '）');
+                        console.error('[mf-wb] 保存没落盘', rec);
+
+                        /* ★ 关键一步：saveWorldInfo 吞掉了状态码，这里绕开它、
+                           自己 POST 一次 /api/worldinfo/edit，把真实原因逼出来。
+                           两种结果都能定性：
+                             · 直连成功 → 是 ctx.saveWorldInfo 这条链的问题（1.19 变了）
+                             · 直连也拒 → 是后端/权限问题，状态码会写进红字 */
+                        var first = mismatch[0];
+                        var fb = findBook(first.name);
+                        apiPost('/api/worldinfo/edit', {
+                            name: first.name,
+                            data: (fb && fb.data) || { entries: {} }
+                        }).then(function () {
+                            setStatus('ok', '已用直连接口写入（原生 saveWorldInfo 那条路失效）');
+                            if (!DIAG.alerted) {
+                                DIAG.alerted = true;
+                                alert('诊断结论：原生的 saveWorldInfo 没把数据写进去，'
+                                    + '但我直接调 /api/worldinfo/edit 成功了。\n\n'
+                                    + detail + '\n\n走的路径：' + route
+                                    + '\nctx 存在：' + rec.hasCtx
+                                    + '，ctx.saveWorldInfo：' + rec.hasSaveWorldInfo
+                                    + '\n\n→ 问题在 saveWorldInfo 这条调用链，不在后端。');
+                            }
+                        }).catch(function (e) {
+                            var m = (e && e.message) ? e.message : String(e);
+                            setStatus('err', '⚠ 写入被服务端拒绝：' + m);
+                            console.error('[mf-wb] 直连 /edit 也被拒', e);
+                            if (!DIAG.alerted) {
+                                DIAG.alerted = true;
+                                alert('保存没有落盘，而且直连接口也被拒绝了。\n\n'
+                                    + detail + '\n\n服务端返回：' + m
+                                    + '\n走的路径：' + route
+                                    + '\nctx 存在：' + rec.hasCtx
+                                    + '，ctx.saveWorldInfo：' + rec.hasSaveWorldInfo);
+                            }
+                        });
+
+                        if (view === 'list' || view === 'book') { try { render(); } catch (e) { } }
+                        return;
+                    }
+
+                    saveFail = 0;
+                    setStatus('ok', rep ? '已保存（已核对磁盘）' : '已保存');
+                    /* 存成功了就把「未保存」标签摘掉（不重绘，免得打断正在打字的人） */
+                    var tags = document.querySelectorAll('#mfWb .tag.unsaved');
+                    if (tags.length) [].slice.call(tags).forEach(function (n) { n.remove(); });
+                    setTimeout(function () {
+                        if (stKind === 'ok' && !Object.keys(dirty).length) setStatus('', '');
+                    }, 1600);
+                    if (Object.keys(dirty).length) flush();
+                }
+
+                if (!DIAG.verified) {
+                    DIAG.verified = true;
+                    return verifyOnDisk(names).then(afterSave);
+                }
+                afterSave(null);
             }).catch(function (err) {
                 saving = false;
                 /* ★★ 关键：把没存成功的书放回队列，绝不能让改动凭空消失 */
@@ -4181,9 +4380,68 @@
             });
         }
 
+        /* ══════════════════════════════════════════════════════════════════
+           酒馆助手 (JS-Slash-Runner / TavernHelper) 适配层   2026-11-07 加
+           ──────────────────────────────────────────────────────────────────
+           ★ 为什么要有这层（用户实测结论，别再绕回去）：
+             用户自己的 D:\preset-manager\manager.js（预设管理器）用这套接口
+             管世界书，在他这台 1.19 上是**真能用**的。而本面板原来靠遍历
+             原生 #world_info 的 <option> 找书名 —— 1.19 把 settings 里的
+             world_info 从「数组」改成了 { globalSelect: [...] }，DOM 那套
+             随时会和真实设置脱节，现象就是「面板里点了启用，酒馆没反应」。
+
+           ★ 接口签名（扩展目录里的 @types/function/worldbook.d.ts 有正式声明）：
+               getWorldbookNames(): string[]                 ← 同步
+               getGlobalWorldbookNames(): string[]           ← 同步，= 全局启用列表
+               rebindGlobalWorldbooks(names: string[]): Promise<void>  ← 写全局启用
+               createWorldbook(name, entries?): Promise<boolean>
+               getWorldbook(name): Promise<WorldbookEntry[]>
+               deleteWorldbook(name): Promise<void>
+
+           ★ 这些函数挂在 window.TavernHelper 上（也可能平铺在 window 上，
+             桌面端还可能在外层 frame 上）→ 三处都试，找不到就返回 null，
+             由调用方退回老路，绝不 throw。
+           ══════════════════════════════════════════════════════════════════ */
+        function thFn(name) {
+            var owners = [];
+            function push(o) { if (o) owners.push(o); }
+            try { push(window.TavernHelper); } catch (e) { }
+            try { push(window.parent && window.parent.TavernHelper); } catch (e) { }
+            try { push(window.top && window.top.TavernHelper); } catch (e) { }
+            push(window);
+            try { push(window.SillyTavern); } catch (e) { }
+            try { push(getCtx()); } catch (e) { }
+            for (var i = 0; i < owners.length; i++) {
+                try {
+                    var f = owners[i][name];
+                    if (typeof f === 'function') return f.bind(owners[i]);
+                } catch (e) { }
+            }
+            return null;
+        }
+        /* 整本启用列表（书名数组）。拿不到返回 null，不是空数组 —— 空数组会把
+           「一本都没启用」和「读不到」混成一件事。 */
+        function thGlobalNames() {
+            var f = thFn('getGlobalWorldbookNames');
+            if (!f) return null;
+            try {
+                var v = f();
+                if (Array.isArray(v)) return v.map(function (x) { return String(x).trim(); }).filter(Boolean);
+            } catch (e) { }
+            return null;
+        }
+
         /* ── 读：书名 + 全局启用 ──────────────────────────────────────────── */
         function nativeNames() {
             var ctx = getCtx();
+            /* ① 首选酒馆助手（和预设管理器同一条路） */
+            var thn = thFn('getWorldbookNames');
+            if (thn) {
+                try {
+                    var tv = thn();
+                    if (Array.isArray(tv) && tv.length) return tv.map(function (x) { return String(x); });
+                } catch (e) { }
+            }
             try {
                 if (ctx && ctx.getWorldInfoNames) {
                     var a = ctx.getWorldInfoNames();
@@ -4217,6 +4475,11 @@
 
         function globalOnSet() {
             var set = {};
+            /* ① 首选酒馆助手：getGlobalWorldbookNames() 就是 settings 里的
+                  world_info.globalSelect，真值，不依赖下拉框有没有渲染出来 */
+            var g = thGlobalNames();
+            if (g) { g.forEach(function (n) { set[n] = true; }); return set; }
+            /* ② 老路：遍历原生下拉的选中项（1.18 时代的写法） */
             var sel = document.getElementById('world_info');
             if (!sel) return set;
             [].slice.call(sel.options).forEach(function (o) {
@@ -4226,71 +4489,146 @@
             return set;
         }
 
-        /* ── 读：全部世界书 ───────────────────────────────────────────────── */
+        /* ── 读：全部世界书 ─────────────────────────────────────────────────
+           ★★ 2026-11-07 改成分层（用户报「打开面板卡、开关点不动、有时点不了」）：
+             旧版打开抽屉时一次性把 17 本书（合计 2.8MB）全读回来，
+             主线程被 JSON.parse 堵住 → 面板半天不出来，这期间点什么都没反应。
+             现在分两段：
+               ① 骨架（毫秒级）：只拿书名 + 全局启用状态，BOOKS 立刻建好，
+                  每本挂一个空壳 data 并标 _stub，列表马上能渲染、能点、能开关；
+               ② 补内容（后台，并发 6）：读完一本就地替换那一行，
+                  用户点进哪本读哪本，绝不等全部。
+           ★ 形状约定：_stub=true 时 data.entries 一定是 {}（不是 null），
+             这样 bstat / entList / 导出这些老代码不用改也不会崩；
+             只有 bookRow 的数字、跨书搜索、进书页要认这个标记。 */
         function loadAll(force) {
             if (!force && BOOKS.length && (Date.now() - LOADED_AT) < 300000) {
                 return Promise.resolve(BOOKS);
             }
             if (LOADING) return LOADING;
+            /* 已经是骨架状态（内容还在后台补）→ 别再起一轮，直接给 */
+            if (!force && BOOKS.length) return Promise.resolve(BOOKS);
 
-            setStatus('on', '正在读取世界书…');
             var ctx = getCtx();
             var names = nativeNames();
+            if (!names.length) {
+                setStatus('err', '没找到任何世界书');
+                return Promise.reject(new Error('没找到任何世界书'));
+            }
 
-            LOADING = Promise.resolve().then(function () {
-                if (!names.length) throw new Error('没找到任何世界书');
-                var onSet = globalOnSet();
-                var out = [];
-                var i = 0, done = 0;
+            var onSet = globalOnSet();
+            var prev = {};
+            BOOKS.forEach(function (b) { prev[b.name] = b; });
 
-                function one(name) {
-                    if (!ctx || !ctx.loadWorldInfo) {
-                        return apiPost('/api/worldinfo/get', { name: name })
-                            .then(function (d) { return d; });
+            /* ① 骨架：不读任何书内容 */
+            BOOKS = names.map(function (n) {
+                var old = prev[n];
+                /* force=true（点重载）一定要真的重读，所以这里不能保留旧 data */
+                if (!force && old && old.data && !old._stub) return old;
+                return {
+                    name: n,
+                    on: !!onSet[n],
+                    pinned: pinnedOf(n),
+                    data: { entries: {} },
+                    _stub: true
+                };
+            });
+            LOADED_AT = Date.now();
+            PENDING = BOOKS.filter(function (b) { return b._stub; }).length;
+            if (PENDING) setStatus('on', '正在读取 ' + PENDING + ' 本世界书…');
+
+            var idx = 0;
+            var CONC = 6;
+
+            function one(name) {
+                if (!ctx || !ctx.loadWorldInfo) {
+                    return apiPost('/api/worldinfo/get', { name: name })
+                        .then(function (d) { return d; });
+                }
+                return Promise.resolve(ctx.loadWorldInfo(name));
+            }
+
+            function worker() {
+                if (idx >= names.length) return Promise.resolve();
+                var name = names[idx++];
+                var b0 = findBook(name);
+                if (!b0 || !b0._stub) return worker();               /* 已读过就跳过 */
+                return one(name).then(function (data) {
+                    var bb = findBook(name);
+                    if (bb && data && data.entries) {
+                        bb.data = data;
+                        delete bb._stub;
+                        PENDING--;
+                        paintRow(name);
+                        return;
                     }
-                    return Promise.resolve(ctx.loadWorldInfo(name));
-                }
-
-                function worker() {
-                    if (i >= names.length) return Promise.resolve();
-                    var name = names[i++];
-                    return one(name).catch(function (e) {
-                        console.warn('[mf-wb] 读不了：' + name, e);
-                        return null;
-                    }).then(function (data) {
-                        if (data && data.entries) {
-                            out.push({
-                                name: name,
-                                on: !!onSet[name],
-                                pinned: pinnedOf(name),
-                                data: data
-                            });
-                        }
-                        done++;
-                        if (done % 3 === 0) setStatus('on', '正在读取世界书… ' + done + '/' + names.length);
-                        return worker();
-                    });
-                }
-
-                var seed = [];
-                for (var s = 0; s < 4; s++) seed.push(worker());
-                return Promise.all(seed).then(function () {
-                    out.sort(function (a, b) { return names.indexOf(a.name) - names.indexOf(b.name); });
-                    BOOKS = out;
-                    LOADED_AT = Date.now();
-                    return BOOKS;
+                    throw new Error('没有 entries');
+                }).catch(function (e) {
+                    console.warn('[mf-wb] 读不了：' + name, e);
+                    var bb2 = findBook(name);
+                    if (bb2) { delete bb2._stub; PENDING--; }        /* 读失败也算处理过，别卡住 */
+                }).then(function () {
+                    if (PENDING > 0 && (PENDING % 3 === 0)) {
+                        setStatus('on', '正在读取世界书… 还剩 ' + PENDING + ' 本');
+                    }
+                    return worker();
                 });
-            }).then(function (books) {
+            }
+
+            var seeds = [];
+            for (var s = 0; s < CONC; s++) seeds.push(worker());
+            LOADING = Promise.all(seeds).then(function () {
                 LOADING = null;
+                PENDING = 0;
                 setStatus('', '');
-                return books;
+                if (view === 'list') { try { render(); } catch (e) { } }
+                return BOOKS;
             }).catch(function (e) {
                 LOADING = null;
                 setStatus('err', '读取失败：' + (e && e.message ? e.message : e));
                 throw e;
             });
 
-            return LOADING;
+            /* ★ 关键：立刻把骨架交出去，调用方马上渲染，不等内容 */
+            return Promise.resolve(BOOKS);
+        }
+
+        /* 后台读完一本 → 只换那一行，不重画整个列表 */
+        function paintRow(name) {
+            if (view !== 'list') return;
+            var body = document.getElementById('mfWbBody');
+            if (!body) return;
+            var rows = body.querySelectorAll('.brow');
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].dataset.name === name) {
+                    var b = findBook(name);
+                    if (!b) return;
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = bookRow(b);
+                    var neu = tmp.firstElementChild;
+                    if (neu) rows[i].replaceWith(neu);
+                    return;
+                }
+            }
+        }
+
+        /* 单独读一本书（点进去之前调）。已读过立即 resolve。 */
+        function loadBook(name) {
+            var b = findBook(name);
+            if (!b) return Promise.reject(new Error('没有这本书'));
+            if (!b._stub) return Promise.resolve(b);
+            var ctx = getCtx();
+            var p = (ctx && ctx.loadWorldInfo)
+                ? Promise.resolve(ctx.loadWorldInfo(name))
+                : apiPost('/api/worldinfo/get', { name: name });
+            return p.then(function (data) {
+                if (data && data.entries) {
+                    b.data = data;
+                    delete b._stub;
+                    if (PENDING > 0) PENDING--;
+                }
+                return b;
+            });
         }
 
         /* ── 置顶（本地记忆，不写世界书） ─────────────────────────────────── */
@@ -4336,7 +4674,9 @@
                      这里只当副标题用，放统计。 */
                 h = '<div class="top">'
                   + '<span class="ttl" style="font-size:12px;font-weight:400;color:var(--ink3)">'
-                  + BOOKS.length + ' 本 · ' + fmt(st.tot) + ' 条 · ' + ktok(st.tok) + ' tok</span>'
+                  + BOOKS.length + ' 本 · '
+                  + (PENDING ? ('读取中，还剩 ' + PENDING + ' 本') : (fmt(st.tot) + ' 条 · ' + ktok(st.tok) + ' tok'))
+                  + '</span>'
                   + '<span class="grow"></span>'
                   + '<span class="iconbtn' + (gsetOpen ? ' on' : '') + '" data-act="gset" title="全局激活设置">' + SV.gear + '</span>'
                   + '</div>';
@@ -4408,13 +4748,15 @@
         /* ── 一级：书列表 ─────────────────────────────────────────────────── */
         function bookRow(b) {
             var s = bstat(b);
+            /* 内容还没读回来（骨架阶段）→ 数字先显示 —，别撒谎写 0 */
+            var stub = !!b._stub;
             return '<div class="brow' + (b.on ? '' : ' dis') + '" data-act="open" data-name="' + escA(b.name) + '">'
               + '<span class="star' + (b.pinned ? ' on' : '') + '" data-act="pin" data-name="' + escA(b.name) + '" title="置顶">' + SV.star + '</span>'
               + '<span class="bn">' + hl(b.name, q) + '</span>'
               + (dirty[b.name] ? '<span class="tag unsaved" title="还没写进文件，别关面板">未保存</span>' : '')
               + (b.on ? '<span class="tag global">全局</span>' : '')
-              + '<span class="bc">' + (b.on ? s.on : 0) + '/' + s.tot + '</span>'
-              + '<span class="bt">' + ktok(s.tok) + '</span>'
+              + '<span class="bc">' + (stub ? '—' : ((b.on ? s.on : 0) + '/' + s.tot)) + '</span>'
+              + '<span class="bt">' + (stub ? '—' : ktok(s.tok)) + '</span>'
               + '<span class="sw' + (b.on ? ' on' : '') + '" data-act="tbook" data-name="' + escA(b.name) + '" title="整本启用 / 停用"></span>'
               + '<span class="into">' + SV.chev + '</span>'
               + '</div>';
@@ -4460,6 +4802,7 @@
             /* 跨书命中 */
             if (q) {
                 var hits = [];
+                var stubN = BOOKS.filter(function (b) { return b._stub; }).length;
                 BOOKS.forEach(function (b) {
                     entList(b).forEach(function (e) {
                         var t = (e.comment || '') + '\n' + (e.content || '') + '\n' + keyArr(e).join(' ');
@@ -4468,7 +4811,9 @@
                 });
                 if (hits.length) {
                     h += '<div style="padding:9px 13px 3px;font-size:11px;color:var(--ink3)">跨书命中 <b style="color:var(--ink2)">'
-                      + hits.length + '</b> 条</div><div class="list">';
+                      + hits.length + '</b> 条'
+                      + (stubN ? '（还有 ' + stubN + ' 本没读完，可能漏）' : '')
+                      + '</div><div class="list">';
                     h += hits.slice(0, 60).map(function (x) {
                         return '<div class="brow" data-act="jump" data-name="' + escA(x.b.name) + '" data-uid="' + x.e.uid + '">'
                           + '<span class="star"></span>'
@@ -4768,11 +5113,80 @@
               + '<span class="s3" style="width:' + (s.tot ? s.off / s.tot * 100 : 0) + '%"></span>'
               + '</div>'
               + '</div>';
-
-            if (!b.on) {
-                h += '<div class="warn">' + SV.warn + '<span><b>整本书没有启用</b>，下面怎么改都不会生效。点右上角开关打开它。</span></div>';
-            }
             return h;
+        }
+
+        /* ★★ 2026-11-07 修 bug（用户报「黄色的未启用标识叠三层」）：
+           原来这条 warning 是拼在 bookHeadHTML() 返回值末尾的，所以它和 .bhead
+           是**两个并列的顶层 div**；而增量渲染用的是
+               hd.outerHTML = bookHeadHTML(b, s)
+           —— 只换掉 .bhead 那一个，旁边旧的 .warn 根本没被收走。
+           于是每展开一次条目（renderOne）就多出一条黄条：点三次叠三层。
+           现在拆成独立函数 + syncHead() 统一维护，谁都不会再漏删。 */
+        function bookWarnHTML(b) {
+            if (b && b.on) return '';
+            return '<div class="warn">' + SV.warn
+                 + '<span><b>整本书没有启用</b>，下面怎么改都不会生效。点右上角开关打开它。</span></div>';
+        }
+
+        /* 只换书页顶部的「统计条 + 警告条」，条目行一个都不动 */
+        function syncHead(b, s) {
+            var body = document.getElementById('mfWbBody');
+            if (!body || !b) return;
+            var hd = body.querySelector('.bhead');
+            if (!hd) return;
+            var nx = hd.nextElementSibling;
+            if (nx && nx.classList.contains('warn')) nx.remove();   /* 先收走旧的，防叠 */
+            hd.outerHTML = bookHeadHTML(b, s || bstat(b));
+            if (!b.on) {
+                var nh = body.querySelector('.bhead');
+                if (nh) nh.insertAdjacentHTML('afterend', bookWarnHTML(b));
+            }
+        }
+
+        /* ★ 2026-11-07 v2.0.7：统计条 / 筛选条的「只改数字」版本。
+           renderOne（点灯、展开收起、改字段）走这两个，DOM 结构一个都不动；
+           只有 bookHeadHTML / fbarHTML 真正需要的场景（进出书页、筛选变化）才整体重建。
+           ★ 黄条（.warn）仍然按 b.on 增删 —— 它是「整本没启用」的提示，
+             多一条少一条都必须跟着状态走（v2.0.6 叠三层的教训）。 */
+        function patchHead(b, s) {
+            var body = document.getElementById('mfWbBody');
+            if (!body) return;
+            var hd = body.querySelector('.bhead');
+            if (!hd) return;
+
+            var bs = hd.querySelectorAll('.bh2 b');
+            var vals = [s.tot, s.on, s.always, ktok(s.tok)];
+            for (var i = 0; i < bs.length && i < vals.length; i++) {
+                var v = String(vals[i]);
+                if (bs[i].textContent !== v) bs[i].textContent = v;
+            }
+
+            var sw = hd.querySelector('.sw');
+            if (sw && sw.classList.contains('on') !== !!b.on) sw.classList.toggle('on', !!b.on);
+
+            var bar = hd.querySelector('.bar');
+            if (bar && bar.children.length >= 3) {
+                bar.children[0].style.width = (s.tot ? s.always / s.tot * 100 : 0) + '%';
+                bar.children[1].style.width = (s.tot ? s.key / s.tot * 100 : 0) + '%';
+                bar.children[2].style.width = (s.tot ? s.off / s.tot * 100 : 0) + '%';
+            }
+
+            var nx = hd.nextElementSibling;
+            var hasWarn = !!(nx && nx.classList && nx.classList.contains('warn'));
+            if (!b.on && !hasWarn) hd.insertAdjacentHTML('afterend', bookWarnHTML(b));
+            else if (b.on && hasWarn) nx.remove();
+        }
+
+        function patchFbar(s) {
+            var body = document.getElementById('mfWbBody');
+            if (!body) return;
+            var ns = body.querySelectorAll('.fbar .fchip .n');
+            var vals = [s.tot, s.always, s.key, s.off];
+            for (var i = 0; i < ns.length && i < vals.length; i++) {
+                var v = String(vals[i]);
+                if (ns[i].textContent !== v) ns[i].textContent = v;
+            }
         }
 
         function fbarHTML(s) {
@@ -4792,7 +5206,7 @@
             var s = bstat(b);
             var list = filteredEnts();
 
-            var h = bookHeadHTML(b, s) + fbarHTML(s);
+            var h = bookHeadHTML(b, s) + bookWarnHTML(b) + fbarHTML(s);
 
             h += '<div class="ents">';
             if (!list.length) {
@@ -4866,38 +5280,126 @@
             if (!neu) { render(); return; }
             we.replaceWith(neu);
 
-            /* 统计条和筛选条上的数字会变（启用条数、token 总量） */
+            /* 统计条和筛选条上的数字会变（启用条数、token 总量）。
+               ★ v2.0.7：不再 outerHTML 重建这两块。原来点一下条目就把书页顶部的
+                 DOM 整体销毁重建，连带一次样式重算 + 布局（149 条的书上是可感的顿）。
+                 现在只改文字和进度条宽度，节点一个都不换。 */
             var b = findBook(curName);
             if (b) {
                 var s = bstat(b);
-                var hd = body.querySelector('.bhead');
-                if (hd) hd.outerHTML = bookHeadHTML(b, s);
-                var fb = body.querySelector('.fbar');
-                if (fb) fb.outerHTML = fbarHTML(s);
+                patchHead(b, s);
+                patchFbar(s);
             }
         }
 
+        /* 进书页的统一入口：open / jump 都走这里，省得两处各写一遍再走形 */
+        function goBook(name, uid) {
+            flushNow();          /* ★ v2.0.7：切书 = 落盘时机（懒保存的兑现点） */
+            view = 'book'; curName = name; q = ''; fstate = 'all';
+            openUid = {}; selUid = {}; batch = false;
+            if (uid !== undefined && uid !== null) openUid[uid] = true;
+            retitle(); render();
+            if (root) root.scrollTop = 0;
+        }
+
         /* ── 书操作 ───────────────────────────────────────────────────────── */
-        /* 整本启用 / 停用 = 把这本书加进「全局世界书」多选（对所有聊天生效）。
-           ★ 匹配用书名（textContent），不是 option.value —— 原因见 globalOnSet 上面的注释。
-           ★ 改完必须走 jQuery 的 .val(...).trigger('change')：
-             ① 原生把 change 绑在 $('#world_info') 上，jQuery trigger 才会调到它；
-             ② select2 也监听 change，只 dispatch 原生事件的话，原生下拉里的标签不会更新，
-                下次调出原生面板会看到状态对不上。 */
+        /* 整本启用 / 停用。
+           ★★ 2026-11-07 重写（用户报「红字说全局下拉没有这本书」）：
+             旧实现遍历 #world_info 的 <option> 找书名，找不到就红字。
+             1.19 把 world_info 改成 {globalSelect:[...]}，下拉和真实设置脱节，
+             于是「新建的书永远点不了启用」。
+             现在走酒馆助手 rebindGlobalWorldbooks(书名数组) —— 和用户自己的
+             预设管理器（D:\preset-manager\manager.js 第 1351 行）同一条路。
+             拿到就写、写完回读；拿不到才退回下面那段老的 DOM 逻辑。
+           ★ 回滚：写失败要把 b.on 恢复原值，否则界面显示已启用、酒馆里没有。 */
         function setBookOn(name, on) {
+            name = String(name || '').trim();
+            if (!name) return false;
+            var b0 = findBook(name);
+            var back = b0 ? b0.on : null;
+
+            function paint(v, force) {
+                var bb = findBook(name);
+                var changed = !!bb && (!!bb.on !== !!v);
+                if (bb) bb.on = !!v;
+                if (!changed && !force) return;         /* 状态没变就不重画，省一次抖动 */
+                if (view === 'list') { try { render(); } catch (e) { } return; }
+                if (view === 'book') {
+                    /* ★ 书页绝对不能 render() —— 那会把 149 条全部重画（实测 30~125ms）。
+                       这里只同步顶部统计条 + 黄条，条目行一个都不动。 */
+                    var cur = findBook(curName);
+                    if (cur) { try { syncHead(cur); } catch (e) { } }
+                }
+            }
+
+            /* ★ 2026-11-07：点击瞬间只改这一行的 class，不重画列表。
+               原来一点开关就 render() 整页（17 行全重建），等接口返回又 render 一次
+               —— 用户看到的是「按下去卡一下、还闪」。真正需要重排（行要在
+               「已启用/未启用」两组之间搬家）留到写完那一次。 */
+            function markLocal(v) {
+                var bb = findBook(name);
+                if (bb) bb.on = !!v;
+                if (view !== 'list') return;
+                var body = document.getElementById('mfWbBody');
+                if (!body) return;
+                var rows = body.querySelectorAll('.brow');
+                for (var r = 0; r < rows.length; r++) {
+                    if (rows[r].dataset.name !== name) continue;
+                    rows[r].classList.toggle('dis', !v);
+                    var sw = rows[r].querySelector('.sw');
+                    if (sw) sw.classList.toggle('on', !!v);
+                    return;
+                }
+            }
+
+            var thSet = thFn('rebindGlobalWorldbooks');
+            if (thSet) {
+                var cur = thGlobalNames() || [];
+                var i = cur.indexOf(name);
+                if (on && i < 0) cur.push(name);
+                if (!on && i >= 0) cur.splice(i, 1);
+
+                markLocal(on);                   /* 先动这一行，写失败再回滚 */
+                setStatus('on', (on ? '正在启用「' : '正在停用「') + name + '」…');
+
+                var done = function (ok, err) {
+                    if (ok) {
+                        /* 以酒馆真实状态为准回读一次 */
+                        var now = thGlobalNames();
+                        if (now) paint(now.indexOf(name) >= 0, true);
+                        else paint(on, true);
+                        setStatus('ok', (on ? '已启用「' : '已停用「') + name + '」');
+                    } else {
+                        paint(back, true);
+                        setStatus('err', '整本启停没写进酒馆：' + (err || '酒馆助手没有回应'));
+                        console.warn('[mf-wb] rebindGlobalWorldbooks 失败', err);
+                    }
+                };
+
+                var ret = null;
+                try { ret = thSet(cur); } catch (e) { ret = null; }
+                if (ret && typeof ret.then === 'function') {
+                    ret.then(function () { done(true); },
+                             function (e) { done(false, (e && e.message) ? e.message : String(e)); });
+                    return true;
+                }
+                done(true);                      /* 同步版（老接口）也认 */
+                return true;
+            }
+
+            /* ── 退路：老 DOM 逻辑（1.18 时代）──────────────────────────── */
             var sel = document.getElementById('world_info');
-            if (!sel) { setStatus('err', '找不到原生世界书下拉（#world_info）'); return false; }
+            if (!sel) { setStatus('err', '拿不到整本启停的接口（酒馆助手没加载，原生下拉也不在）'); return false; }
 
             var want = String(name).trim().toLowerCase();
             var opts = [].slice.call(sel.options);
             var idx = -1;
-            for (var i = 0; i < opts.length; i++) {
-                if (optName(opts[i]).toLowerCase() === want) { idx = i; break; }
+            for (var j = 0; j < opts.length; j++) {
+                if (optName(opts[j]).toLowerCase() === want) { idx = j; break; }
             }
             if (idx < 0) {
-                console.warn('[mf-wb] 全局启用下拉里没有这本书：' + name,
-                    opts.map(optName));
-                setStatus('err', '全局启用下拉里没这本书：' + name);
+                console.warn('[mf-wb] 全局启用下拉里没有这本书：' + name, opts.map(optName));
+                setStatus('err', '这台酒馆没开放整本启停接口，下拉里也找不到「' + name + '」');
                 return false;
             }
 
@@ -4929,12 +5431,26 @@
             if (findBook(name)) { alert('已经有同名世界书了'); return; }
 
             var ctx = getCtx();
-            var p = (ctx && ctx.saveWorldInfo)
-                ? Promise.resolve(ctx.saveWorldInfo(name, { entries: {} }, true))
-                : apiPost('/api/worldinfo/edit', { name: name, data: { entries: {} } });
+            /* ★ 新建优先走酒馆助手 createWorldbook(name) → Promise<boolean>：
+                 它会同时写文件 + 刷新 world_names + 重填原生下拉，
+                 比 saveWorldInfo(name, {entries:{}}) 干净（后者不保证登记进列表）。 */
+            var thCreate = thFn('createWorldbook');
+            var p = thCreate
+                ? Promise.resolve(thCreate(name))
+                : ((ctx && ctx.saveWorldInfo)
+                    ? Promise.resolve(ctx.saveWorldInfo(name, { entries: {} }, true))
+                    : apiPost('/api/worldinfo/edit', { name: name, data: { entries: {} } }));
 
             setStatus('on', '正在新建…');
             p.then(function () {
+                /* ★ 2026-11-07 诊断：saveWorldInfo 吞状态码，建失败也会 resolve。
+                   所以立刻 GET 一次，文件真在才继续往下走。 */
+                return apiPost('/api/worldinfo/get', { name: name }).catch(function (e) {
+                    return { __err: (e && e.message) ? e.message : String(e) };
+                });
+            }).then(function (probe) {
+                if (probe && probe.__err) throw new Error('新书读不回来：' + probe.__err);
+                if (!probe || !('entries' in probe)) throw new Error('新书读不回来（服务端没有这个文件）');
                 return (ctx && ctx.updateWorldInfoList) ? ctx.updateWorldInfoList() : null;
             }).then(function () {
                 /* ★ 不重新 loadAll：updateWorldInfoList 之后原生下拉已更新，
@@ -5018,7 +5534,7 @@
             b.data.entries[uid] = e;
             openUid[uid] = true;
             fstate = 'all'; q = '';
-            touch(b.name);
+            touchNow(b.name);      /* 结构改动（新建 / 复制 / 删除）立刻写，别压内存 */
             render();
             var el = document.querySelector('#mfWb .world_entry[data-uid="' + uid + '"] input[data-f="comment"]');
             if (el) { el.focus(); el.scrollIntoView({ block: 'center' }); }
@@ -5033,7 +5549,7 @@
             c.comment = (src.comment || '') + ' (副本)';
             b.data.entries[c.uid] = c;
             openUid[c.uid] = true;
-            touch(b.name);
+            touchNow(b.name);      /* 结构改动（新建 / 复制 / 删除）立刻写，别压内存 */
             render();
         }
 
@@ -5045,12 +5561,51 @@
             delete b.data.entries[uid];
             delete openUid[uid];
             delete selUid[uid];
-            touch(b.name);
+            touchNow(b.name);      /* 结构改动（新建 / 复制 / 删除）立刻写，别压内存 */
             render();
         }
 
         /* ── 事件：点击 ───────────────────────────────────────────────────── */
+        /* ★★ 2026-11-07 v2.0.7 性能打点
+           用户报「连续关两个条目卡，卡好几秒像死机」。
+           读代码能算出的开销（bstat、JSON.stringify 1MB）都只有几十毫秒，
+           解释不了「几秒」→ 必须先量出来是哪一下慢，别再猜（上次判「下载失败」连猜错两次）。
+           做法：把 onClick 包一层计时。
+             · 每次点击耗时 > 120ms 记进 window.__mfWbPerf（最多 40 条）
+             · > 500ms 直接显示在面板状态条上，4 秒后自动消失
+           用户下次说「卡」的时候，状态条上那行「慢：收起 2340ms」就是证据。
+           定性完可以删掉这一段（不影响任何功能）。 */
+        var PERF = (window.__mfWbPerf = window.__mfWbPerf || []);
+        var PERF_TO = 0;
+        function nowMs() {
+            return (window.performance && performance.now) ? performance.now() : Date.now();
+        }
+        function notePerf(ev, t0) {
+            var dt = nowMs() - t0;
+            if (dt < 120) return;
+            var act = '点击';
+            try {
+                var n = ev.target.closest('[data-act]');
+                act = n ? (n.dataset.act || '点击') : (ev.target.tagName || '点击');
+            } catch (e) { }
+            PERF.push({ act: act, ms: Math.round(dt), at: Date.now() });
+            if (PERF.length > 40) PERF.shift();
+            if (dt >= 500) {
+                setStatus('on', '慢：' + act + ' ' + Math.round(dt) + 'ms');
+                clearTimeout(PERF_TO);
+                PERF_TO = setTimeout(function () {
+                    if (stText.indexOf('慢：') === 0) setStatus('', '');
+                }, 4000);
+            }
+        }
+
         function onClick(ev) {
+            var t0 = nowMs();
+            try { onClickImpl(ev); }
+            finally { notePerf(ev, t0); }
+        }
+
+        function onClickImpl(ev) {
             var t = ev.target.closest('[data-act]');
             var kd = ev.target.closest('[data-kdel]');
 
@@ -5065,7 +5620,7 @@
                 arr.splice(+kd.dataset.kdel, 1);
                 el0[f0] = arr;
                 touch(curName);
-                render();
+                renderOne(+box.dataset.uid);   /* v2.0.7：删一个关键词不用重建整页 */
                 return;
             }
 
@@ -5074,23 +5629,40 @@
 
             if (act === 'open') {
                 var b = findBook(t.dataset.name);
-                if (b) {
-                    view = 'book'; curName = b.name; q = ''; fstate = 'all';
-                    openUid = {}; selUid = {}; batch = false; retitle(); render();
-                    if (root) root.scrollTop = 0;
+                if (!b) return;
+                /* ★ 内容还没读回来就先进书页 → 用户会看到一本「空书」，
+                   而且这时点「新建条目」会写进空壳，随后被读回来的数据覆盖 → 改动丢失。
+                   所以：单本读完再进，一步都不抢。 */
+                if (b._stub) {
+                    setStatus('on', '正在读取「' + b.name + '」…');
+                    loadBook(b.name).then(function () {
+                        setStatus('', '');
+                        goBook(b.name);
+                    }).catch(function (e) {
+                        setStatus('err', '读不出来：' + (e && e.message ? e.message : e));
+                    });
+                    return;
                 }
+                goBook(b.name);
                 return;
             }
             if (act === 'jump') {
                 var b2 = findBook(t.dataset.name);
-                if (b2) {
-                    view = 'book'; curName = b2.name; fstate = 'all';
-                    openUid = {}; openUid[+t.dataset.uid] = true; selUid = {}; batch = false;
-                    q = ''; retitle(); render();
+                if (!b2) return;
+                var jUid = +t.dataset.uid;
+                if (b2._stub) {
+                    setStatus('on', '正在读取「' + b2.name + '」…');
+                    loadBook(b2.name).then(function () {
+                        setStatus('', '');
+                        goBook(b2.name, jUid);
+                    }).catch(function () { setStatus('err', '读不出来'); });
+                    return;
                 }
+                goBook(b2.name, jUid);
                 return;
             }
             if (act === 'back') {
+                flushNow();      /* ★ v2.0.7：返回列表 = 落盘时机 */
                 view = 'list'; curName = null; q = ''; batch = false; selUid = {}; openUid = {};
                 retitle(); render();
                 if (root) root.scrollTop = 0;
@@ -5104,11 +5676,10 @@
             }
             if (act === 'tbook') {
                 var bt = findBook(t.dataset.name);
-                if (bt) {
-                    var okOn = setBookOn(bt.name, !bt.on);
-                    if (okOn) setStatus('ok', (bt.on ? '已启用「' : '已停用「') + bt.name + '」');
-                    render();
-                }
+                /* ★ 这里绝对不要再 render()：setBookOn 内部已经做了「点击只改这一行 +
+                   写完归位」，外面再来一次 render 就是「点一下重画两遍」，用户眼里就是卡。
+                   状态条也由 setBookOn 自己出，别在外面拼（之前拼反过：拿的是改后的值）。 */
+                if (bt) setBookOn(bt.name, !bt.on);
                 ev.stopPropagation();
                 return;
             }
@@ -5121,7 +5692,21 @@
             }
             if (act === 'kill') {
                 var ke = entByUid(+t.dataset.uid);
-                if (ke) { ke.disable = !ke.disable; touch(curName); renderOne(ke.uid); }
+                if (ke) {
+                    ke.disable = !ke.disable;
+                    touch(curName);
+                    /* ★ v2.0.7：灯的颜色完全由 .world_entry.off 控制（skin.css 3387 行），
+                       所以「没展开的条目」点灯只 toggle 一个 class 就够，不用重建 DOM；
+                       展开状态必须重画，因为里面的「禁用 / 常驻 / 关键词」三方按钮要跟着变。 */
+                    var kwe = t.closest('.world_entry');
+                    if (!openUid[ke.uid] && kwe) {
+                        kwe.classList.toggle('off', !!ke.disable);
+                        var kb = findBook(curName);
+                        if (kb) { var ks = bstat(kb); patchHead(kb, ks); patchFbar(ks); }
+                    } else {
+                        renderOne(ke.uid);
+                    }
+                }
                 ev.stopPropagation();
                 return;
             }
@@ -5209,7 +5794,9 @@
             else if (tr === 'always') { e.disable = false; e.constant = true; e.vectorized = false; }
             else { e.disable = false; e.constant = false; e.vectorized = false; }
             touch(curName);
-            render();
+            /* ★ v2.0.7：只重画这一条。原来这里是全量 render()，
+               一条开关把 149 条全部重建（含展开条目里的大段正文）。 */
+            renderOne(e.uid);
         }
 
         /* ── 事件：输入（只改内存，不重渲染） ─────────────────────────────── */
@@ -5287,7 +5874,7 @@
             if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); add(inp.value); return; }
             if (ev.key === 'Backspace' && !inp.value) {
                 var a = (e[f] || []).slice();
-                if (a.length) { a.pop(); e[f] = a; touch(curName); render(); }
+                if (a.length) { a.pop(); e[f] = a; touch(curName); renderOne(e.uid); }
             }
         }
 
@@ -5305,7 +5892,9 @@
             });
             e[f] = arr;
             touch(curName);
-            render();
+            /* ★ v2.0.7：blur 是 capture 绑定，点下一条会先触发这里。
+               原来走全量 render()，等于每次换条目都重建整页 → 连续操作越点越卡。 */
+            renderOne(e.uid);
         }
 
         /* ── 组装 DOM ─────────────────────────────────────────────────────── */
@@ -5347,6 +5936,75 @@
         root.addEventListener('blur', onBlur, true);
         root.addEventListener('scroll', function () { lastScroll = root.scrollTop; });
 
+        /* ★★ 2026-11-07 v2.0.8 临时诊断：聊天区「滚到最下面卡住，要等一下」量到底多久
+           用户原话：聊天主界面、滚到最下面时卡住、要等一下就恢复。
+           读代码排除过的：扩展没在 #chat 上绑任何 scroll/touch 监听；
+             .mes 本身无背景无阴影无边框；原生 script.js 没有 #chat 的滚动监听。
+           → 只能量。做法：滚到底那一刻起，用 rAF 采 1.2 秒的帧间隔，记最长的一帧。
+             · > 400ms 视为真卡，写 window.__mfScrollNote
+             · 打开世界书面板时把最近一次写进状态条（例如「滚到底 1830ms」）
+             · 全部记录在 window.__mfScrollPerf（最多 30 条）
+           ⚠ 纯测量：只加一个 passive 监听 + 1.2 秒的 rAF 循环，不动任何样式和逻辑。
+             定性完把这一段整块删掉即可，不影响功能。 */
+        (function () {
+            var bindTries = 0;
+            function bind() {
+                var chat = document.getElementById('chat');
+                if (!chat) { if (++bindTries < 25) setTimeout(bind, 800); return; }
+                if (chat.dataset.mfScrollProbe) return;
+                chat.dataset.mfScrollProbe = '1';
+
+                var armed = false, t0 = 0, worst = 0, frames = 0;
+
+                /* ★ v2.0.10：改成「一滚动就采样」，不再只在离底 6px 时采。
+                   原因：用户说的是「上下滑动卡」= 整个滚动过程掉帧，
+                   而上次只在滚到底那一下采样，抓到的 worst 可能 < 400ms → 什么都没报
+                   （用户回「没有」就是这个原因）。
+                   现在同时记 worst（停顿型卡）和 fps（掉帧型卡），两者都能看见。 */
+                chat.addEventListener('scroll', function () {
+                    if (document.hidden) return;
+                    if (armed) return;
+
+                    armed = true; t0 = nowMs(); worst = 0; frames = 0;
+
+                    (function loop() {
+                        var a = nowMs();
+                        frames++;
+                        requestAnimationFrame(function () {
+                            var d = nowMs() - a;
+                            if (d > worst) worst = d;
+                            var span = nowMs() - t0;
+                            if (span < 1200) { loop(); return; }
+
+                            armed = false;
+                            var fps = Math.round(frames / (span / 1000));
+                            var rec = {
+                                at: Date.now(),
+                                worst: Math.round(worst),
+                                frames: frames,
+                                fps: fps,
+                                mes: document.querySelectorAll('#chat .mes').length,
+                                scrollH: chat.scrollHeight,
+                                clientH: chat.clientHeight
+                            };
+                            var arr = (window.__mfScrollPerf = window.__mfScrollPerf || []);
+                            arr.push(rec);
+                            if (arr.length > 30) arr.shift();
+
+                            if (rec.worst >= 400) {
+                                window.__mfScrollNote = '滚动停顿 ' + rec.worst + 'ms／楼层 ' + rec.mes;
+                                console.warn('[mf-wb] 滚动停顿', rec);
+                            } else if (fps < 50) {
+                                window.__mfScrollNote = '滚动 ' + fps + 'fps／楼层 ' + rec.mes;
+                                console.warn('[mf-wb] 滚动掉帧', rec);
+                            }
+                        });
+                    })();
+                }, { passive: true });
+            }
+            bind();
+        })();
+
         /* 全局设置面板的写入：只处理带 data-g 的那个控件 */
         root.addEventListener('change', function (ev) {
             var el = ev.target;
@@ -5378,9 +6036,59 @@
             loadAll(false).then(function () { render(); }).catch(function () { render(); });
         }
 
+        /* ★ v2.0.10 诊断函数（定性后可删）：一行念出聊天区的真实状态。
+           `楼层` = #chat 里 .mes 的个数（= 真正渲染了多少层）；
+           `节点` = #chat 内全部 DOM 元素数（含 markdown 生成的 span/table）；
+           `截断` = 运行时 #chat_truncation 下拉的值（和 settings.json 的 5 对不上就是被谁改了）；
+           `更早按钮` = 原生 #show_more_messages 是否在（在 = 截断确实生效了）。
+           ★ 为什么读 DOM 而不是读 power_user.chat_truncation：
+             我们要的是「实际生效值」，不是「配置文件里写的值」，两者可能不一致。 */
+        function chatSnapText() {
+            var c = document.getElementById('chat');
+            if (!c) return '#chat 没找到';
+            var mes = c.querySelectorAll('.mes').length;
+            var nodes = c.querySelectorAll('*').length;
+            var sel = document.getElementById('chat_truncation');
+            var tr = sel ? String(sel.value) : '?';
+            return '楼层 ' + mes
+                + ' · 节点 ' + (nodes >= 1000 ? (nodes / 1000).toFixed(1) + 'k' : nodes)
+                + ' · 截断 ' + tr
+                + ' · 更早按钮 ' + (document.getElementById('show_more_messages') ? '有' : '无')
+                + ' · 视口 ' + c.clientHeight + '/' + c.scrollHeight;
+        }
+
         /* 抽屉打开时才拉数据（关着拉没意义，还拖慢启动） */
         var pre = function () {
-            if (wi.classList.contains('closedDrawer')) return;
+            if (wi.classList.contains('closedDrawer')) {
+                /* ★ v2.0.7：关抽屉 = 懒保存的兑现点之一。
+                   ★ v2.0.8：延后 400ms —— 抽屉切换动画是 260ms，原来用 0
+                     会和动画抢主线程，用户感知就是「从一个面板切到另一个时顿一下」。
+                     等面板先滑完再写，写盘就藏在动画后面了。
+                     没有脏数据时 flushNow 直接 return，零开销。 */
+                setTimeout(flushNow, 400);
+                return;
+            }
+            /* ★ v2.0.10 诊断（定性后可整段删）：无条件把聊天区的真实状态念出来。
+               要判断的唯一一件事：settings 里 chat_truncation = 5，到底有没有落到 DOM。
+                 · 楼层 ≈ 5 且「更早按钮 有」 → 截断生效，卡不在楼层数，去查滚动边界；
+                 · 楼层 = 184 且「更早按钮 无」 → 截断没生效，DOM 里是全量，用户判断成立。
+               为什么用 toastr 而不是状态条：状态条马上会被 loadAll 的
+               「正在读取世界书…」覆盖掉，用户根本看不见。 */
+            try {
+                var snap = chatSnapText() + (window.__mfScrollNote ? ' ‖ ' + window.__mfScrollNote : '');
+                console.log('[mf-wb] 聊天区快照 →', snap, window.__mfScrollPerf);
+                if (window.toastr && typeof window.toastr.info === 'function') {
+                    window.toastr.info(snap, '聊天区快照', {
+                        timeOut: 8000, closeButton: true, progressBar: true, positionClass: 'toast-top-center'
+                    });
+                }
+            } catch (e) { console.warn('[mf-wb] 快照失败', e); }
+
+            /* 诊断：把最近一次「滚到底卡了多久」显示在状态条上（用户能看到） */
+            if (window.__mfScrollNote) {
+                setStatus('on', window.__mfScrollNote);
+                window.__mfScrollNote = '';
+            }
             if (BOOKS.length && (Date.now() - LOADED_AT) < 60000) return;
             loadAll(false).then(function () { render(); }).catch(function () { });
         };
@@ -5394,6 +6102,1585 @@
         document.addEventListener('DOMContentLoaded', function () { initWorldPanel(0); });
     } else {
         initWorldPanel(0);
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════
+       模块 9：chat-photo —— 主聊天里给 AI 消息挂一张照片
+       ═══════════════════════════════════════════════════════════════════
+       用户口径（2026-11-13）：
+       · 名字下面一条极细虚线「加张照片」，不导入就什么都没有，跟原版一样
+       · 导入后 = 头像那种感觉：AI 消息顶部一张图，底部渐变化进正文
+       · 宽和高必须各自独立调（不是等比），还有三档预设和三种渐变
+       · 收起 = 不渲染，回到普通 HTML
+       · 手机上没有 hover，工具条收成一个「⋯」，点开才展开三个操作
+       · 只挂该角色这一段的第一条消息（不是每条都挂）
+
+       ★ 关键实现决定（别乱改）
+       1. 存储用 IndexedDB，不用 localStorage。
+          一张裁好的图约 1100×300 jpeg ≈ 100~160KB，localStorage 只有 5MB，
+          十来个角色就炸；而且 base64 还要再涨 33%。
+       2. 只认**角色显示名**做 key，不认 chid。
+          group 聊天里 chid 未必等于 characters 下标，按 chid 取会把照片串到别人身上。
+          代价：角色改名后照片要重导（可接受，总比串图好）。
+       3. 注入点：.mes_block 里 .ch_name 之后、.mes_text 之前。
+          找不到 .ch_name 就插到 .mes_text 前，再找不到就插到块首 —— 三级兜底，
+          不同版本酒馆的 DOM 差一点也不会崩。
+       4. 「第一条」按当前聊天重新算：每次全量扫 #chat .mes，取该名字第一次出现的那条。
+          切聊天 / 删楼 都会自动重算，不用自己记状态。
+
+       ★ 依赖的皮肤变量（skin.css :root）：--mf-paper / --mf-line2 / --mf-ink2 / --mf-accent
+       ═══════════════════════════════════════════════════════════════════ */
+    function initChatPhoto() {
+        if (window.__mfChatPhoto) return;
+        window.__mfChatPhoto = true;
+
+        var LS_KEY = 'mf_ph_style';
+        var DB_NAME = 'mf_photo_db';
+        var STORE = 'photos';
+
+        /* ── 外观：全局一套，宽/高/渐变 ── */
+        var STYLE = { w: 100, h: 118, fade: 'bottom' };
+        try {
+            var s0 = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+            if (typeof s0.w === 'number') STYLE.w = s0.w;
+            if (typeof s0.h === 'number') STYLE.h = s0.h;
+            if (['bottom', 'both', 'none'].indexOf(s0.fade) >= 0) STYLE.fade = s0.fade;
+        } catch (e) { }
+
+        function saveStyle() {
+            try { localStorage.setItem(LS_KEY, JSON.stringify(STYLE)); } catch (e) { }
+        }
+        function applyStyle() {
+            var b = document.body;
+            b.style.setProperty('--mf-ph-w', STYLE.w + '%');
+            b.style.setProperty('--mf-ph-h', STYLE.h + 'px');
+            b.setAttribute('data-mf-ph-fade', STYLE.fade);
+        }
+
+        /* 预设：只负责套一组 w/h，套完照样能拖滑块 */
+        var PRESETS = {
+            strip:  { w: 100, r: 4 },
+            flat:   { w: 100, r: 2 },
+            square: { w: 68,  r: 1 }
+        };
+        function colWidth() {
+            var c = document.querySelector('#chat .mes .mes_block') ||
+                    document.querySelector('#chat .mes');
+            return c && c.clientWidth ? c.clientWidth : 600;
+        }
+        function aspect() {
+            return Math.max(1, colWidth() * STYLE.w / 100) / Math.max(1, STYLE.h);
+        }
+        function applyPreset(k) {
+            var p = PRESETS[k];
+            if (!p) return;
+            STYLE.w = p.w;
+            STYLE.h = Math.round(colWidth() * p.w / 100 / p.r);
+        }
+        function presetOf() {
+            var cw = colWidth();
+            for (var k in PRESETS) {
+                var p = PRESETS[k];
+                if (Math.abs(STYLE.w - p.w) <= 1 &&
+                    Math.abs(STYLE.h - cw * p.w / 100 / p.r) <= 4) return k;
+            }
+            return '';
+        }
+
+        /* ── 存储：IndexedDB ── */
+        var dbp = null;
+        function openDB() {
+            if (dbp) return dbp;
+            dbp = new Promise(function (res, rej) {
+                var r;
+                try { r = indexedDB.open(DB_NAME, 1); } catch (e) { rej(e); return; }
+                r.onupgradeneeded = function () {
+                    var d = r.result;
+                    if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+                };
+                r.onsuccess = function () { res(r.result); };
+                r.onerror = function () { rej(r.error); };
+            });
+            return dbp;
+        }
+        function dbPut(key, blob) {
+            return openDB().then(function (d) {
+                return new Promise(function (res, rej) {
+                    var tx = d.transaction(STORE, 'readwrite');
+                    tx.objectStore(STORE).put(blob, key);
+                    tx.oncomplete = function () { res(); };
+                    tx.onerror = function () { rej(tx.error); };
+                });
+            });
+        }
+        function dbDel(key) {
+            return openDB().then(function (d) {
+                return new Promise(function (res, rej) {
+                    var tx = d.transaction(STORE, 'readwrite');
+                    tx.objectStore(STORE).delete(key);
+                    tx.oncomplete = function () { res(); };
+                    tx.onerror = function () { rej(tx.error); };
+                });
+            });
+        }
+        function dbAll() {
+            return openDB().then(function (d) {
+                return new Promise(function (res, rej) {
+                    var tx = d.transaction(STORE, 'readonly');
+                    var st = tx.objectStore(STORE);
+                    var keys = [], vals = [], n = 0;
+                    function done() {
+                        if (++n < 2) return;
+                        var m = new Map();
+                        keys.forEach(function (k, i) { m.set(k, vals[i]); });
+                        res(m);
+                    }
+                    var kr = st.getAllKeys(), vr = st.getAll();
+                    kr.onsuccess = function () { keys = kr.result || []; done(); };
+                    vr.onsuccess = function () { vals = vr.result || []; done(); };
+                    tx.onerror = function () { rej(tx.error); };
+                });
+            });
+        }
+
+        /* key → { blob, url, hidden } */
+        var PHOTOS = new Map();
+        var ready = false;
+
+        function setMem(key, blob, hidden) {
+            var old = PHOTOS.get(key);
+            if (old && old.url) URL.revokeObjectURL(old.url);
+            PHOTOS.set(key, { blob: blob, url: URL.createObjectURL(blob), hidden: !!hidden });
+        }
+
+        /* ── DOM 工具 ── */
+        function isUser(m) {
+            var a = m.getAttribute('is_user');
+            if (a !== null) return a === 'true';
+            return m.classList.contains('is_user');
+        }
+        function nameOf(m) {
+            var nt = m.querySelector('.ch_name .name_text');
+            if (nt) {
+                var s = (nt.textContent || '').trim();
+                if (s) return s;
+            }
+            var cn = m.querySelector('.ch_name');
+            if (cn) {
+                /* .ch_name 里除了名字还塞着编辑/删除等按钮，直接读 textContent 会拼成一串垃圾。
+                   只认第一个非空文本节点，退一步认第一个 span。 */
+                for (var i = 0; i < cn.childNodes.length; i++) {
+                    var n = cn.childNodes[i];
+                    if (n.nodeType === 3 && n.textContent.trim()) return n.textContent.trim();
+                }
+                var sp = cn.querySelector('span');
+                if (sp && sp.textContent.trim()) return sp.textContent.trim();
+            }
+            return (m.getAttribute('data-name') || '').trim();
+        }
+
+        var barSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+        var plusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+
+        function photoHTML(key) {
+            return '<img class="mf-ph-img" alt="">'
+                + '<div class="mf-ph-bar">'
+                + '  <button class="mf-ph-more" type="button" title="照片">' + barSvg + '</button>'
+                + '</div>'
+                + '<div class="mf-ph-menu">'
+                + '  <button type="button" data-act="style">外观</button>'
+                + '  <button type="button" data-act="swap">换图</button>'
+                + '  <button type="button" data-act="fold">收起</button>'
+                + '</div>';
+        }
+
+        function insertPhoto(mes, key, info) {
+            var block = mes.querySelector('.mes_block') || mes;
+            var nameEl = block.querySelector('.ch_name');
+            var textEl = block.querySelector('.mes_text');
+            var el = document.createElement('div');
+            el.className = 'mf-ph';
+            el.setAttribute('data-mf-key', key);
+            el.innerHTML = photoHTML(key);
+            el.querySelector('.mf-ph-img').src = info.url;
+            if (nameEl && nameEl.parentNode === block) {
+                block.insertBefore(el, nameEl.nextSibling);
+            } else if (textEl && textEl.parentNode === block) {
+                block.insertBefore(el, textEl);
+            } else {
+                block.insertBefore(el, block.firstChild);
+            }
+        }
+
+        function insertEntry(mes, key) {
+            var block = mes.querySelector('.mes_block') || mes;
+            var nameEl = block.querySelector('.ch_name');
+            var textEl = block.querySelector('.mes_text');
+            var el = document.createElement('button');
+            el.type = 'button';
+            el.className = 'mf-addp';
+            el.setAttribute('data-mf-add', key);
+            el.innerHTML = '<i></i><span>' + plusSvg + '加张照片</span><i></i>';
+            if (nameEl && nameEl.parentNode === block) {
+                block.insertBefore(el, nameEl.nextSibling);
+            } else if (textEl && textEl.parentNode === block) {
+                block.insertBefore(el, textEl);
+            } else {
+                block.insertBefore(el, block.firstChild);
+            }
+        }
+
+        /* ── 扫描 + 注入 ── */
+        function scan() {
+            var chat = document.getElementById('chat');
+            if (!chat || !ready) return;
+
+            var mesList = Array.prototype.slice.call(chat.querySelectorAll('.mes'));
+            var first = new Map();
+            mesList.forEach(function (m) {
+                if (isUser(m)) return;
+                var k = nameOf(m);
+                if (!k) return;
+                if (!first.has(k)) first.set(k, m);
+            });
+
+            /* 1. 清掉不该留的：不是该名字的第一条、照片被删、或者已收起 */
+            Array.prototype.forEach.call(chat.querySelectorAll('.mf-ph'), function (el) {
+                var owner = el.closest('.mes');
+                var k = el.getAttribute('data-mf-key');
+                var info = PHOTOS.get(k);
+                if (!(first.get(k) === owner && info && !info.hidden)) el.remove();
+            });
+            Array.prototype.forEach.call(chat.querySelectorAll('.mf-addp'), function (el) {
+                var owner = el.closest('.mes');
+                var k = el.getAttribute('data-mf-add');
+                var info = PHOTOS.get(k);
+                var ok = first.get(k) === owner && !(info && !info.hidden);
+                if (!ok) el.remove();
+            });
+
+            /* 2. 补上缺的 */
+            first.forEach(function (m, k) {
+                var info = PHOTOS.get(k);
+                if (info && !info.hidden) {
+                    if (!m.querySelector('.mf-ph')) insertPhoto(m, k, info);
+                } else {
+                    if (!m.querySelector('.mf-addp') && !m.querySelector('.mf-ph')) insertEntry(m, k);
+                }
+            });
+        }
+
+        var raf = 0;
+        function schedule() {
+            if (raf) return;
+            raf = requestAnimationFrame(function () { raf = 0; scan(); });
+        }
+
+        function waitChat() {
+            var c = document.getElementById('chat');
+            if (!c) { setTimeout(waitChat, 500); return; }
+            new MutationObserver(schedule).observe(c, { childList: true });
+            schedule();
+        }
+
+        /* ── 事件：照片上的 ⋯ / 加照片入口 ── */
+        document.addEventListener('click', function (ev) {
+            var more = ev.target.closest('.mf-ph-more');
+            if (more) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                var ph = more.closest('.mf-ph');
+                var open = ph.classList.contains('menu-on');
+                document.querySelectorAll('.mf-ph.menu-on').forEach(function (x) { x.classList.remove('menu-on'); });
+                if (!open) ph.classList.add('menu-on');
+                return;
+            }
+            if (ev.target.closest('.mf-ph-menu')) {
+                /* ★ 菜单项必须先处理，再判"点在菜单里就 return"。
+                   原来顺序写反了，导致点「外观/换图/收起」全被第 2 条拦掉，
+                   表现就是菜单能开、点了没反应。 */
+                var mi = ev.target.closest('[data-act]');
+                if (mi) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    var key = mi.closest('.mf-ph').getAttribute('data-mf-key');
+                    var act = mi.getAttribute('data-act');
+                    mi.closest('.mf-ph').classList.remove('menu-on');
+                    if (act === 'fold') {
+                        var i2 = PHOTOS.get(key);
+                        if (i2) { i2.hidden = true; scan(); }
+                    } else if (act === 'swap') {
+                        openSheet(key);
+                    } else if (act === 'style') {
+                        openStyle(mi);
+                    }
+                }
+                return;
+            }
+
+            document.querySelectorAll('.mf-ph.menu-on').forEach(function (x) { x.classList.remove('menu-on'); });
+
+            var add = ev.target.closest('[data-mf-add]');
+            if (add) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                var k = add.getAttribute('data-mf-add');
+                var info = PHOTOS.get(k);
+                if (info && info.hidden) { info.hidden = false; scan(); }
+                else openSheet(k);
+                return;
+            }
+        }, true);
+
+        /* ── 外观面板 ── */
+        var styleEl = null;
+        function buildStyle() {
+            if (styleEl) return styleEl;
+            var d = document.createElement('div');
+            d.className = 'mf-ph-pop';
+            d.innerHTML =
+                '<div class="mf-ph-popt">照片外观<em>所有照片共用</em></div>'
+                + '<div class="mf-ph-row"><span>预设</span><div class="mf-ph-seg" data-k="preset">'
+                + '<button type="button" data-p="strip">横条</button>'
+                + '<button type="button" data-p="flat">扁条</button>'
+                + '<button type="button" data-p="square">方块</button></div></div>'
+                + '<div class="mf-ph-row"><span>宽</span><input id="mfPhW" type="range" min="5" max="100" step="1"><b id="mfPhWv">100%</b></div>'
+                + '<div class="mf-ph-row"><span>高</span><input id="mfPhH" type="range" min="16" max="900" step="1"><b id="mfPhHv">118</b></div>'
+                + '<div class="mf-ph-row"><span>渐变</span><div class="mf-ph-seg" data-k="fade">'
+                + '<button type="button" data-v="bottom">仅底部</button>'
+                + '<button type="button" data-v="both">上下</button>'
+                + '<button type="button" data-v="none">无</button></div></div>';
+
+            d.addEventListener('click', function (ev) {
+                var p = ev.target.closest('[data-p]');
+                if (p) { applyPreset(p.getAttribute('data-p')); syncStyle(); applyStyle(); saveStyle(); return; }
+                var v = ev.target.closest('[data-v]');
+                if (v) { STYLE.fade = v.getAttribute('data-v'); syncStyle(); applyStyle(); saveStyle(); }
+            });
+
+            var rw = d.querySelector('#mfPhW'), rh = d.querySelector('#mfPhH');
+            rw.addEventListener('input', function () {
+                STYLE.w = +rw.value;
+                d.querySelector('#mfPhWv').textContent = rw.value + '%';
+                syncPreset(); applyStyle(); saveStyle();
+            });
+            rh.addEventListener('input', function () {
+                STYLE.h = +rh.value;
+                d.querySelector('#mfPhHv').textContent = rh.value;
+                syncPreset(); applyStyle(); saveStyle();
+            });
+            document.body.appendChild(d);
+            styleEl = d;
+            return d;
+        }
+        function syncPreset() {
+            var cur = presetOf();
+            styleEl.querySelectorAll('[data-k="preset"] button').forEach(function (b) {
+                b.classList.toggle('on', b.getAttribute('data-p') === cur);
+            });
+        }
+        function syncStyle() {
+            styleEl.querySelectorAll('[data-k="fade"] button').forEach(function (b) {
+                b.classList.toggle('on', b.getAttribute('data-v') === STYLE.fade);
+            });
+            styleEl.querySelector('#mfPhW').value = STYLE.w;
+            styleEl.querySelector('#mfPhWv').textContent = STYLE.w + '%';
+            styleEl.querySelector('#mfPhH').value = STYLE.h;
+            styleEl.querySelector('#mfPhHv').textContent = STYLE.h;
+            syncPreset();
+        }
+        function openStyle(anchor) {
+            var d = buildStyle();
+            syncStyle();
+            d.classList.add('on');
+            var r = anchor.closest('.mf-ph').getBoundingClientRect();
+            d.style.left = Math.max(8, Math.min(window.innerWidth - 268, r.right - 258)) + 'px';
+            var top = r.bottom + 8;
+            if (top + d.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - d.offsetHeight - 8);
+            d.style.top = top + 'px';
+        }
+        document.addEventListener('mousedown', function (e) {
+            if (styleEl && styleEl.classList.contains('on') &&
+                !e.target.closest('.mf-ph-pop') && !e.target.closest('.mf-ph-more')) {
+                styleEl.classList.remove('on');
+            }
+        });
+
+        /* ── 裁图面板 ── */
+        var sheet = null, cropImg, cropBox, zoomIn, okBtn, delBtn, curKey = '';
+        var natW = 0, natH = 0, zoom = 1, ox = 0, oy = 0, base = 1;
+
+        function buildSheet() {
+            if (sheet) return sheet;
+            var d = document.createElement('div');
+            d.className = 'mf-ph-sheet';
+            d.innerHTML =
+                '<div class="mf-ph-card">'
+                + '<header>加一张照片<button class="x" type="button" data-a="cancel">&times;</button></header>'
+                + '<div class="mf-ph-pick">'
+                + '  <label class="dz">' + plusSvg + '<b>点击选择照片</b><span>也可以直接拖进来</span>'
+                + '  <input type="file" accept="image/*" hidden></label>'
+                + '</div>'
+                + '<div class="mf-ph-crop"><div class="mf-ph-box"><img alt=""><i class="frame"></i></div>'
+                + '  <p class="hint">拖动调整位置 · 滑块缩放 · 框内就是最后出图的范围</p>'
+                + '  <input type="range" min="1" max="3" step="0.01" value="1"></div>'
+                + '<footer><button class="ghost" type="button" data-a="del">删照片</button>'
+                + '<button class="ghost" type="button" data-a="cancel">取消</button>'
+                + '<button class="ok" type="button" data-a="ok" disabled>确定</button></footer>'
+                + '</div>';
+            document.body.appendChild(d);
+
+            cropImg = d.querySelector('.mf-ph-box img');
+            cropBox = d.querySelector('.mf-ph-box');
+            zoomIn = d.querySelector('.mf-ph-crop input');
+            okBtn = d.querySelector('[data-a="ok"]');
+            delBtn = d.querySelector('[data-a="del"]');
+
+            d.querySelector('.dz input').addEventListener('change', function (e) {
+                var f = e.target.files && e.target.files[0];
+                if (f) loadFile(f);
+            });
+            ['dragenter', 'dragover'].forEach(function (t) {
+                d.addEventListener(t, function (e) { e.preventDefault(); d.classList.add('over'); });
+            });
+            ['dragleave', 'drop'].forEach(function (t) {
+                d.addEventListener(t, function (e) { e.preventDefault(); d.classList.remove('over'); });
+            });
+            d.addEventListener('drop', function (e) {
+                var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f && /^image\//.test(f.type)) loadFile(f);
+            });
+            d.addEventListener('click', function (e) {
+                if (e.target === d) closeSheet();
+                var a = e.target.closest('[data-a]');
+                if (!a) return;
+                var act = a.getAttribute('data-a');
+                if (act === 'cancel') closeSheet();
+                else if (act === 'del') removePhoto();
+                else if (act === 'ok') commit();
+            });
+
+            /* 拖拽 / 缩放 */
+            var drag = null;
+            cropBox.addEventListener('pointerdown', function (e) {
+                if (!cropImg.src) return;
+                drag = { x: e.clientX, y: e.clientY, ox: ox, oy: oy };
+                cropBox.setPointerCapture(e.pointerId);
+            });
+            cropBox.addEventListener('pointermove', function (e) {
+                if (!drag) return;
+                ox = drag.ox + (e.clientX - drag.x);
+                oy = drag.oy + (e.clientY - drag.y);
+                paint();
+            });
+            cropBox.addEventListener('pointerup', function () { drag = null; });
+            cropBox.addEventListener('pointercancel', function () { drag = null; });
+            zoomIn.addEventListener('input', function (e) {
+                if (!cropImg.src) return;
+                var cw = cropBox.clientWidth, ch = cropBox.clientHeight;
+                var cx = cw / 2, cy = ch / 2, k = (+e.target.value) / zoom;
+                ox = cx - (cx - ox) * k;
+                oy = cy - (cy - oy) * k;
+                zoom = +e.target.value;
+                paint();
+            });
+            cropBox.addEventListener('wheel', function (e) {
+                if (!cropImg.src) return;
+                e.preventDefault();
+                var nv = Math.min(3, Math.max(1, zoom + (e.deltaY > 0 ? -0.06 : 0.06)));
+                var cw = cropBox.clientWidth, ch = cropBox.clientHeight;
+                var cx = cw / 2, cy = ch / 2, k = nv / zoom;
+                ox = cx - (cx - ox) * k;
+                oy = cy - (cy - oy) * k;
+                zoom = nv; zoomIn.value = nv;
+                paint();
+            }, { passive: false });
+
+            sheet = d;
+            return d;
+        }
+
+        function loadFile(file) {
+            var fr = new FileReader();
+            fr.onload = function () { loadSrc(fr.result); };
+            fr.readAsDataURL(file);
+        }
+        function loadSrc(src) {
+            cropImg.onload = function () {
+                natW = cropImg.naturalWidth;
+                natH = cropImg.naturalHeight;
+                sheet.querySelector('.mf-ph-pick').style.display = 'none';
+                sheet.querySelector('.mf-ph-crop').classList.add('on');
+                okBtn.disabled = false;
+                syncBox();
+                fitReset();
+            };
+            cropImg.src = src;
+        }
+
+        /* 取景框跟着当前宽高比走（跟原型同一套：竖图按高度反算宽度，保住比例） */
+        function syncBox() {
+            var ar = aspect();
+            var avail = Math.max(120, cropBox.parentElement.clientWidth - 2);
+            var maxH = Math.min(window.innerHeight * 0.42, 400);
+            var w = avail, h = w / ar;
+            if (h > maxH) { h = maxH; w = Math.max(80, h * ar); }
+            cropBox.style.width = Math.round(w) + 'px';
+            cropBox.style.height = Math.round(h) + 'px';
+            cropBox.style.margin = '0 auto';
+        }
+        function fitReset() {
+            var cw = cropBox.clientWidth, ch = cropBox.clientHeight;
+            base = Math.max(cw / natW, ch / natH);
+            zoom = 1; zoomIn.value = 1;
+            var w = natW * base, h = natH * base;
+            ox = (cw - w) / 2; oy = (ch - h) / 2;
+            paint();
+        }
+        function paint() {
+            var w = natW * base * zoom, h = natH * base * zoom;
+            cropImg.style.width = w + 'px';
+            cropImg.style.height = h + 'px';
+            clampPos();
+            cropImg.style.left = ox + 'px';
+            cropImg.style.top = oy + 'px';
+        }
+        function clampPos() {
+            var w = natW * base * zoom, h = natH * base * zoom;
+            var cw = cropBox.clientWidth, ch = cropBox.clientHeight;
+            if (w <= cw) ox = (cw - w) / 2; else ox = Math.min(0, Math.max(cw - w, ox));
+            if (h <= ch) oy = (ch - h) / 2; else oy = Math.min(0, Math.max(ch - h, oy));
+        }
+
+        function openSheet(key) {
+            var d = buildSheet();
+            curKey = key;
+            var info = PHOTOS.get(key);
+            d.querySelector('.mf-ph-pick').style.display = '';
+            d.querySelector('.mf-ph-crop').classList.remove('on');
+            d.querySelector('.mf-ph-pick input').value = '';
+            delBtn.style.display = info ? '' : 'none';
+            okBtn.disabled = true;
+            cropImg.removeAttribute('src');
+            d.classList.add('on');
+        }
+        function closeSheet() { if (sheet) sheet.classList.remove('on'); curKey = ''; }
+
+        function removePhoto() {
+            if (!curKey) return;
+            var k = curKey;
+            dbDel(k).catch(function () { });
+            var o = PHOTOS.get(k);
+            if (o && o.url) URL.revokeObjectURL(o.url);
+            PHOTOS.delete(k);
+            closeSheet();
+            scan();
+        }
+
+        function commit() {
+            if (!curKey || !cropImg.src) return;
+            var k = curKey;
+            var cw = cropBox.clientWidth, ch = cropBox.clientHeight;
+            var scale = natW / (natW * base * zoom);
+            var sx = -ox * scale, sy = -oy * scale, sw = cw * scale, sh = ch * scale;
+
+            var ar = cw / Math.max(1, ch);
+            var MAXP = 1100, OW, OH;
+            if (ar >= 1) { OW = MAXP; OH = Math.max(24, Math.round(MAXP / ar)); }
+            else { OH = MAXP; OW = Math.max(24, Math.round(MAXP * ar)); }
+
+            var cv = document.createElement('canvas');
+            cv.width = OW; cv.height = OH;
+            var ctx = cv.getContext('2d');
+            ctx.imageSmoothingQuality = 'high';
+            try {
+                ctx.drawImage(cropImg, sx, sy, sw, sh, 0, 0, OW, OH);
+            } catch (e) { }
+
+            cv.toBlob(function (blob) {
+                if (!blob) { closeSheet(); return; }
+                setMem(k, blob, false);
+                dbPut(k, blob).catch(function () { });
+                closeSheet();
+                scan();
+            }, 'image/jpeg', 0.88);
+        }
+
+        /* 调试钩子：只在本地模拟页/控制台用，线上不影响功能。
+           没有它就没法在 CDP 里塞一张测试图，只能靠手动选文件。 */
+        window.__mfPhotoAPI = {
+            photos: PHOTOS,
+            scan: scan,
+            setMem: setMem,
+            put: dbPut,
+            style: STYLE,
+            applyStyle: applyStyle,
+            aspect: aspect
+        };
+
+        /* ── 启动 ── */
+        applyStyle();
+        dbAll().then(function (m) {
+            m.forEach(function (blob, k) {
+                if (blob instanceof Blob) PHOTOS.set(k, { blob: blob, url: URL.createObjectURL(blob), hidden: false });
+            });
+            ready = true;
+            waitChat();
+        }).catch(function (e) {
+            console.warn(LOG, '照片库读取失败（IndexedDB 不可用？）', e);
+            ready = true;
+            waitChat();
+        });
+
+        /* 调试用：?mfph=diag 在控制台打一遍结构自检 */
+        if (/[?&]mfph=diag/.test(location.search)) {
+            setTimeout(function () {
+                var m = document.querySelector('#chat .mes');
+                console.log(LOG, '照片自检', {
+                    chat: !!document.getElementById('chat'),
+                    mes: document.querySelectorAll('#chat .mes').length,
+                    block: !!document.querySelector('#chat .mes .mes_block'),
+                    chName: !!document.querySelector('#chat .mes .ch_name'),
+                    nameText: !!document.querySelector('#chat .mes .ch_name .name_text'),
+                    isUserAttr: m ? m.getAttribute('is_user') : null,
+                    key: m ? nameOf(m) : null,
+                    photos: PHOTOS.size
+                });
+            }, 2500);
+        }
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 10 · 角色墙（改造酒馆原生角色列表）
+       ─────────────────────────────────────────────────────────────────────
+       【为什么是"改造"而不是"新建"】
+       用户 2026-11-13 原话：「这个角色墙所对应的就是酒馆那个东西啊，而不是新增的」。
+       所以目标节点是原生常驻的 #rm_print_characters_block，不另开界面。
+
+       【为什么不重建 DOM】
+       原生格子上挂着：点击选中、双击开聊、拖拽排序、右键菜单、收藏切换、
+       批量编辑、标签文件夹钻取。重建 DOM 就得把这些事件全部重接一遍，
+       而且 printCharacters 每次翻页/搜索都会 .empty() 整块重绘，
+       重建方案要在每条路径上重挂一次，漏一处就坏一个功能。
+       → 所以：结构零改动，JS 只做「加 class」，外观全交给 skin.css。
+
+       【为什么主图必须用 JS 标、不能用 :nth-child】
+       #rm_print_characters_block 里除 .character_select 外，还会混进
+       .character_group / .bogus_folder_select（标签文件夹）/ .empty_block /
+       .hidden_block / .back_block（见 script.js:1044 的 switch）。
+       用 :nth-child(1) 会把"返回块"当成主图。必须筛出真正的 .character_select。
+
+       【真实结构（2026-11-13 读 SillyTavern release 分支核对）】
+       script.js:945 getCharacterBlock / index.html:7232 模板
+         .character_select[data-chid]        ← ★ 是 data-chid，不是 chid
+                           .is_fav           ← ★ 收藏状态靠这个 class
+           .avatar > img                     ← 真 img，src 是缩略图
+           .character_select_container
+             .character_name_block > .ch_name
+             .ch_additional_info / .ch_description / .tags / .ch_fav_icon
+
+       【皮肤这边的坑（改动前必读）】
+       原生 style.css 有四处跟卡片墙完全相反，skin.css 里全部用 !important 盖了：
+         :2913 #rm_print_characters_block{display:flex}   → 改成 grid
+         :3285 .character_select{flex-direction:row;padding:5px} → 改成 column
+         :1406 .avatar{width/height:固定值;border-radius:圆形}
+         :1450 .avatar img{同上 + border + box-shadow}
+         :3353 .character_select_container{position:relative}
+           ★ 这条最阴：它会把 .ch_fav_icon 的 absolute 从卡片右上角
+             拽到名字行里。已在 skin.css 里打回 position:static。
+
+       【重绘怎么跟上】
+       printCharacters 的 callback 每次都 $(listId).empty() 再 append，
+       所以每次翻页 / 搜索 / 换排序 / 切标签文件夹，class 都会被冲掉。
+       → MutationObserver 盯 childList（不盯 attributes，否则自己加 class 会自激）。
+       → 另加一个 1.2s 的低频检查：面板关闭再打开时 block 节点会被整体重建，
+         那时旧 observer 已经盯不住新节点了。开销是一次 querySelector，可忽略。
+       ═════════════════════════════════════════════════════════════════════ */
+    var MF_WALL_HERO_AT = 0;   /* 第几个格子当 2×2 主图（0 = 第一个） */
+    var MF_WALL_BIG_AT = 4;    /* 第几个格子跨两行（4 = 第五个） */
+
+    function mfMarkWall(block) {
+        if (!block) return;
+
+        var kids = Array.prototype.slice.call(block.children);
+        for (var i = 0; i < kids.length; i++) {
+            kids[i].classList.remove('mf-hero', 'mf-big');
+        }
+
+        /* 只认真正的角色格子，跳过分组 / 文件夹 / 空态 / 返回块 */
+        var chars = kids.filter(function (el) {
+            return el.classList && el.classList.contains('character_select');
+        });
+
+        /* ★★ 保险：认不出结构就一个 class 都不加，保持酒馆原生外观。
+           理由 —— 本模块的 CSS 全部挂在 .mf-wall 上，而 .mf-wall 只在
+           这里加。所以最坏的结果是"这次没效果"，绝不可能是"面板被改坏"。
+           触发场景：这版客户端的 DOM 跟上游 release 不一样（改了类名、
+           换了虚拟列表）。那时应该去补选择器，而不是让用户面对一个
+           半残的面板。 */
+        if (!chars.length) {
+            block.classList.remove('mf-wall');
+            return;
+        }
+
+        block.classList.add('mf-wall');
+        for (var j = 0; j < chars.length; j++) {
+            if (j === MF_WALL_HERO_AT) chars[j].classList.add('mf-hero');
+            else if (j === MF_WALL_BIG_AT) chars[j].classList.add('mf-big');
+        }
+    }
+
+    /* ── 顶部工具栏折叠（v2.3.1） ──
+       【用户口径 2026-11-13 22:2x】
+       「上面的按钮还是有啊。你上面不要堆那么多，不然手机界面会很别扭，
+         你都把那些按钮给换个样式。那你就把它先隐藏，或者把它们折叠收到一块儿」
+       → 默认只留一行：搜索框 + ⋯。四批全收进 ⋯ 里。
+
+       【为什么塞进 #form_character_search_form】
+       那个 div 原生就是 display:flex（style.css:3204），append 一个按钮
+       天然就排成一行，不用绝对定位、不用算 top。放 #charListFixedTop 里
+       就得自己算偏移，字号一变就飘。
+
+       【幂等】
+       面板重开时 #charListFixedTop 里的东西不一定重建，所以每次都先查
+       有没有 #mf-tools-toggle，有就只同步 class，不重复插。 */
+    function mfEnsureTools() {
+        var block = document.getElementById('rm_characters_block');
+        var form = document.getElementById('form_character_search_form');
+        if (!block || !form) return;
+
+        block.classList.add('mf-tools');
+
+        if (form.querySelector('#mf-tools-toggle')) return;
+
+        var btn = document.createElement('button');
+        btn.id = 'mf-tools-toggle';
+        btn.type = 'button';
+        btn.title = '更多工具';
+        btn.setAttribute('aria-label', '更多工具');
+        btn.setAttribute('aria-expanded', 'false');
+        /* 收起态三个点「⋯」，展开态换成「×」。
+           两个 svg 用 CSS 切 display，比旋转三条横线明确得多
+           （旋转 90° 出来是竖三点，用户看不出这是"关掉"）。 */
+        btn.innerHTML = '<svg class="mf-ico-more" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+            + '<circle cx="5.2" cy="12" r="1.85"/><circle cx="12" cy="12" r="1.85"/><circle cx="18.8" cy="12" r="1.85"/></svg>'
+            + '<svg class="mf-ico-close" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            + ' stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+        btn.addEventListener('click', function (e) {
+            /* 别让点击冒到 form / 外面的委托上去（有些扩展会在 form 上挂 input 处理） */
+            e.preventDefault();
+            e.stopPropagation();
+            var open = block.classList.toggle('mf-tools-open');
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            btn.title = open ? '收起工具' : '更多工具';
+        });
+
+        form.appendChild(btn);
+    }
+
+    function initCharWall() {
+        var tries = 0;
+        var block = null;
+        var mo = null;
+
+        function attach() {
+            /* 顶部折叠跟角色墙用同一个巡检节奏：面板重开、抽屉重建都能跟上。
+               它不依赖 mfMarkWall 的成功与否（认不出结构也能先把顶栏收好）。 */
+            mfEnsureTools();
+
+            var b = document.querySelector('#rm_print_characters_block');
+            if (!b) return false;
+            if (b === block && mo) { mfMarkWall(b); return true; }
+
+            block = b;
+            mfMarkWall(b);
+
+            if (mo) mo.disconnect();
+            mo = new MutationObserver(function () { mfMarkWall(block); });
+            /* ★ 只监听 childList。监听 attributes 的话，
+                 mfMarkWall 自己加的 class 会触发回调 → 无限自激。 */
+            mo.observe(b, { childList: true });
+            return true;
+        }
+
+        (function waitForPanel() {
+            if (attach()) return;
+            if (++tries < 60) setTimeout(waitForPanel, 300);
+            /* 60 次 = 18 秒，够酒馆启动；还没出来说明这个版本结构不同，
+               直接放弃，别留一个每 300ms 跑的定时器。 */
+        })();
+
+        /* 面板关闭再打开时 #rm_print_characters_block 会被整个重建，
+           旧 observer 盯的是死节点。低频巡一下，换了就重挂。 */
+        setInterval(function () { attach(); }, 1200);
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 11 · 角色详情页（点格子滑入）
+       ─────────────────────────────────────────────────────────────────────
+       【用户口径 2026-11-13 22:2x】
+       「我点击那个格子，我点进去也只是编辑界面，没有 HTML 的所谓的选那个
+        聊天记录，完全没有。」
+       → 点格子要进详情页（封面 / 简介 / 三口径 / 真实聊天列表 / 底部进聊天）。
+
+       【为什么必须拦原生点击】
+       原生（script.js:11192）只有一句：
+           $(document).on('click', '.character_select', async function () {
+               const id = Number($(this).attr('data-chid'));
+               await selectCharacterById(id);
+           });
+       selectCharacterById 的作用是「选中 + 把右侧抽屉切到角色编辑面板」，
+       所以用户点下去永远是编辑界面。详情页只能自己接管。
+
+       【拦法：document 捕获阶段】
+       原生那套是 jQuery 的 document 委托（冒泡阶段）。我们在 document 上加
+       捕获阶段的监听（第三个参数 true），事件还没往下走就 stopPropagation，
+       jQuery 的委托永远收不到 —— 这是唯一不用改酒馆源码就能稳拦的位置。
+       ★ 不能用 stopImmediatePropagation：同一节点上别人的监听器也会被打断。
+
+       【必须放行的三种点击（放行错了就是原生死按钮）】
+         1. .ch_fav_icon        收藏星标
+         2. 批量编辑模式        #bulkSelectAllButton 可见 = 批量选中中，点格子是勾选
+         3. 拖拽               pointerdown→click 位移 > 6px 视为拖拽，不是点击
+       判不出来就放行（宁可多开一次原生编辑，也不要吃掉原生命令）。
+
+       【数据从哪来 —— 全部走酒馆真实接口，不用静态快照】
+       · 角色本体     ctx.characters[chid]（name / description / data.tags / data.creator）
+       · 头像大图     /characters/<avatar>   ← 不是 getThumbnailUrl，那个是 96px 缩略图，铺 20vh 会糊
+       · 聊天列表     POST /api/characters/chats  {avatar_url}
+                      返回 map，值含 file_name / file_size / message_count / last_mes / preview_message
+                      （与 script.js:8510 getPastCharacterChats 完全同一条路子）
+       · 进某段聊天   ctx.selectCharacterById(chid) → ctx.openCharacterChat(file_name)
+                      openCharacterChat 内部会 clearChat + getChat，所以必须先选角色
+       · 新建聊天     点原生 #option_start_new_chat（会弹酒馆自己的确认框，保持原生行为）
+       · 编辑        关掉详情页，把这次点击"还"给原生 —— 直接 ctx.selectCharacterById(chid)
+
+       【右侧抽屉要收起来】
+       进聊天后如果 #right-nav-panel 还开着，聊天区被挡一半。原生开关是
+       #rightNavDrawerIcon 那个抽屉把手，点一下即可（用 closedDrawer 判状态）。
+
+       【踩坑】
+       - #mf-detail 的位移层必须自己 overflow:hidden，否则 translateX(100%)
+         会把整个酒馆撑出横向滚动条。
+       - 详情页里的滚动容器 .mfd-content 是 flex column，子项必须 flex:0 0 auto，
+         否则三段卡会被压成 0 高（原型阶段踩过）。
+       - 头像 src 用 encodeURIComponent；中文角色名 + 空格不编码会 404。
+       ═════════════════════════════════════════════════════════════════════ */
+
+    var MF_D_EL = null;          /* #mf-detail 根节点 */
+    var MF_D_CHID = null;        /* 当前展示的角色下标 */
+    var MF_D_CHATS = [];         /* 当前角色的聊天列表 */
+    var MF_D_CUR = -1;           /* 选中第几段 */
+    var MF_D_DOWN = null;        /* pointerdown 坐标，用来识别拖拽 */
+    var MF_D_STATE = 'closed';   /* closed | open | closing —— 防连点把状态搞乱 */
+    var MF_D_TIMER = null;       /* 关闭后摘除 display 的定时器 */
+    var MF_D_PASS = false;       /* 为 true 时放过这一次卡片点击（把点击还给原生） */
+
+    function mfCtx() {
+        return (window.SillyTavern && typeof window.SillyTavern.getContext === 'function')
+            ? window.SillyTavern.getContext()
+            : null;
+    }
+
+    function mfEsc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function mfAvatarUrl(av) {
+        return new URL('/characters/' + encodeURIComponent(av), location.href).href;
+    }
+
+    /* 时间：酒馆的 last_mes 是毫秒时间戳（数字）或 ISO 串，两种都要认 */
+    function mfWhen(v) {
+        if (v == null || v === '') return null;
+        var d = (typeof v === 'number') ? new Date(v) : new Date(String(v));
+        if (isNaN(d.getTime())) return null;
+        return d;
+    }
+
+    function mfDayTxt(d) {
+        if (!d) return '—';
+        var diff = (Date.now() - d.getTime()) / 86400000;
+        if (diff < 1) return '今天';
+        if (diff < 2) return '昨天';
+        if (diff < 30) return Math.floor(diff) + ' 天前';
+        if (diff < 365) return Math.floor(diff / 30) + ' 个月前';
+        return Math.floor(diff / 365) + ' 年前';
+    }
+
+    function mfFullTxt(d) {
+        if (!d) return '';
+        var p = function (n) { return String(n).padStart(2, '0'); };
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+            + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    /* 「最近活跃」那格是「大数字 + 小单位」两段，所以不能直接塞 mfDayTxt 的整句。
+       ★ 别再用正则去抠（踩过：「今天」被 [^\d年月天前个] 抠成了「天」）。 */
+    function mfRecParts(d) {
+        if (!d) return ['—', ''];
+        var diff = (Date.now() - d.getTime()) / 86400000;
+        if (diff < 1) return ['今天', ''];
+        if (diff < 2) return ['1', '天前'];
+        if (diff < 30) return [String(Math.floor(diff)), '天前'];
+        if (diff < 365) return [String(Math.floor(diff / 30)), '个月前'];
+        return [String(Math.floor(diff / 365)), '年前'];
+    }
+
+    /* 聊天记录条目的主标题。
+       酒馆的聊天文件名只有「角色名 - 2026-10-02@22h16m26s476ms」，没有语义标签，
+       所以标题放绝对日期时间，右边那列放相对时间（今天/3 天前），两边互补。
+       去年以前的补上年份。 */
+    function mfSegWhen(d) {
+        if (!d) return '—';
+        var p = function (n) { return String(n).padStart(2, '0'); };
+        var md = (d.getMonth() + 1) + '月' + d.getDate() + '日';
+        if (d.getFullYear() !== new Date().getFullYear()) md = d.getFullYear() + '年' + md;
+        return md + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    /* 摘要：把 markdown 符号和换行压成一行动作，太长的截断 */
+    function mfLine(raw) {
+        var s = String(raw || '').replace(/[\r\n]+/g, ' ').replace(/[*_`>#]/g, '').trim();
+        return s.length > 120 ? s.slice(0, 120) + '…' : s;
+    }
+
+    /* ── 建壳（只建一次，之后只换内容） ── */
+    function mfBuildDetail() {
+        if (MF_D_EL) return MF_D_EL;
+
+        var el = document.createElement('div');
+        el.id = 'mf-detail';
+        el.innerHTML = [
+            '<div class="mfd-mask"></div>',
+            '<div class="mfd-app" role="dialog" aria-modal="true" aria-label="角色详情">',
+            '  <div class="mfd-banner">',
+            '    <div class="mfd-dim"></div>',
+            '    <img alt="">',
+            '    <div class="mfd-grain"></div>',
+            '    <div class="mfd-fade"></div>',
+            '  </div>',
+            '  <div class="mfd-topbar">',
+            '    <button class="mfd-back" type="button">',
+            '      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>',
+            '      <span>角色列表</span>',
+            '    </button>',
+            '    <button class="mfd-edit" type="button" title="编辑这个角色">',
+            '      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+            '    </button>',
+            '  </div>',
+            '  <main class="mfd-content">',
+            '    <div class="mfd-idline">',
+            '      <h2><span class="mfd-name"></span><span class="mfd-ver"></span></h2>',
+            '      <p class="mfd-tagline"></p>',
+            '      <p class="mfd-byline"></p>',
+            '    </div>',
+            '    <p class="mfd-desc"></p>',
+            '    <div class="mfd-tags"></div>',
+            '    <section class="mfd-freq">',
+            '      <div class="mfd-fhead"><span class="lbl">使用频率</span><span class="rank"></span><i></i></div>',
+            '      <div class="mfd-mtx">',
+            '        <div class="mfd-mx"><span class="mk">热度</span><div class="mv"><span data-k="hot">—</span><em>/ 100</em></div><div class="mb"><i data-b="hot"></i></div><div class="ms" data-s="hot"></div></div>',
+            '        <div class="mfd-mx"><span class="mk">消息总量</span><div class="mv"><span data-k="msg">—</span><em>条</em></div><div class="mb"><i data-b="msg"></i></div><div class="ms" data-s="msg"></div></div>',
+            '        <div class="mfd-mx"><span class="mk">最近活跃</span><div class="mv"><span data-k="rec">—</span><em data-u="rec"></em></div><div class="mb"><i data-b="rec"></i></div><div class="ms" data-s="rec"></div></div>',
+            '      </div>',
+            '    </section>',
+            '    <div class="mfd-sechead"><span class="lbl">聊天记录</span><span class="cnt"></span><i></i></div>',
+            '    <ul class="mfd-segs"></ul>',
+            '    <div class="mfd-tail"></div>',
+            '  </main>',
+            '  <footer class="mfd-dock">',
+            '    <button class="mfd-cta" type="button">',
+            '      <span class="t">进入</span><span class="n"></span>',
+            '      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+            '    </button>',
+            '    <button class="mfd-newbtn" type="button" title="开一段新聊天">',
+            '      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+            '    </button>',
+            '  </footer>',
+            '</div>'
+        ].join('\n');
+
+        document.body.appendChild(el);
+
+        el.querySelector('.mfd-mask').addEventListener('click', mfCloseDetail);
+        el.querySelector('.mfd-back').addEventListener('click', mfCloseDetail);
+        el.querySelector('.mfd-edit').addEventListener('click', function () {
+            var chid = MF_D_CHID;
+            mfCloseDetail();
+            /* 还回原生：这就是用户原来点一下会看到的角色编辑面板 */
+            var ctx = mfCtx();
+            if (ctx && chid != null) ctx.selectCharacterById(Number(chid));
+        });
+        el.querySelector('.mfd-cta').addEventListener('click', function () { mfEnterChat(MF_D_CUR); });
+        el.querySelector('.mfd-newbtn').addEventListener('click', mfNewChat);
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && el.classList.contains('mfd-in')) mfCloseDetail();
+        });
+
+        MF_D_EL = el;
+        return el;
+    }
+
+    function mfOpenDetail(chid) {
+        var ctx = mfCtx();
+        if (!ctx || !ctx.characters) return;
+        var ch = ctx.characters[chid];
+        if (!ch) return;
+
+        var el = mfBuildDetail();
+        MF_D_CHID = chid;
+        MF_D_CHATS = [];
+        MF_D_CUR = -1;
+
+        var data = ch.data || {};
+        var nameEl = el.querySelector('.mfd-name');
+        var verEl = el.querySelector('.mfd-ver');
+        nameEl.textContent = ch.name || '(未命名)';
+        verEl.textContent = data.character_version ? 'v' + data.character_version : '';
+
+        var desc = String(ch.description || data.description || '').trim();
+        var tagline = String(data.creator_notes || ch.creatorcomment || '').split(/[\r\n]+/)[0].trim();
+        var byline = [];
+        if (data.creator) byline.push('by ' + data.creator);
+        if (ch.create_date) {
+            var cd = mfWhen(ch.create_date);
+            if (cd) byline.push(mfFullTxt(cd).slice(0, 10) + ' 建卡');
+        }
+
+        el.querySelector('.mfd-tagline').textContent = tagline.slice(0, 60);
+        el.querySelector('.mfd-tagline').style.display = tagline ? '' : 'none';
+        el.querySelector('.mfd-byline').textContent = byline.join(' · ');
+
+        var dEl = el.querySelector('.mfd-desc');
+        /* 简介里常有 {{char}} / {{user}} 宏，这里不做替换（详情页不是正文），
+           只把换行压平，免得三行 clamp 里全是空行。 */
+        dEl.textContent = desc.replace(/\r/g, '').replace(/\n{2,}/g, ' \n');
+        dEl.style.display = desc ? '' : 'none';
+
+        var tags = (data.tags && data.tags.length) ? data.tags : (ch.tags || []);
+        var tWrap = el.querySelector('.mfd-tags');
+        tWrap.innerHTML = tags.slice(0, 12).map(function (t) { return '<span>' + mfEsc(t) + '</span>'; }).join('');
+        tWrap.style.display = tags.length ? '' : 'none';
+
+        var img = el.querySelector('.mfd-banner img');
+        var dim = el.querySelector('.mfd-banner .mfd-dim');
+        var big = mfAvatarUrl(ch.avatar);
+        img.onerror = function () {
+            /* 大图 404 时退回缩略图，总比空白好 */
+            if (ctx.getThumbnailUrl) img.src = ctx.getThumbnailUrl('avatar', ch.avatar);
+        };
+        img.src = big;
+        dim.style.backgroundImage = 'url("' + big.replace(/"/g, '%22') + '")';
+
+        /* 进入时先把三口径清成占位，等聊天列表回来再填 */
+        ['hot', 'msg', 'rec'].forEach(function (k) {
+            el.querySelector('[data-k="' + k + '"]').textContent = '—';
+            el.querySelector('[data-b="' + k + '"]').style.width = '0';
+            el.querySelector('[data-s="' + k + '"]').textContent = '';
+        });
+        el.querySelector('.mfd-fhead .rank').textContent = '';
+        el.querySelector('.mfd-sechead .cnt').textContent = '';
+        el.querySelector('.mfd-segs').innerHTML = '<li class="mfd-empty">正在读取聊天记录…</li>';
+        el.querySelector('.mfd-cta .t').textContent = '进入「' + (ch.name || '') + '」';
+        el.querySelector('.mfd-cta .n').textContent = '';
+
+        mfOpenLayer();
+        el.querySelector('.mfd-content').scrollTop = 0;
+
+        mfLoadChats(chid);
+    }
+
+    /* ── 进出状态机 ──
+       2026-11-13 22:5x 用户报「一退出就卡」。
+       原来关闭只删一个 class，满屏的合成层仍然留在文档里（translateX(100%)），
+       WebView2 会继续为它分配图层，切回角色列表滚动就发滞。
+       现在：关上 0.42s 后 display:none 真摘掉；再打开时先取消 hide、强制一次重排，
+       否则 display:none→block 与 transform 变化落在同一帧，动画会被整段跳过。 */
+    /* ── 把这一层钉到右抽屉的框上 ──
+       2026-11-13 23:2x 用户口径（原话）：
+       「原本是角色列表，原本的界面就是在右边，就算你进入二级面，那它的界面
+        也只是覆盖角色列表那里，但是你却直接把它放在了中间，而且它的两边
+        根本不是空白，它是被拉长那种空白」。
+       → 抽屉宽度 = (100dvw - --sheldWidth - 2px)/2（style.css:5624），
+         --sheldWidth 被用户拖过就会变，抽屉还能最大化/拖拽，
+         所以**不自己算**，一次 getBoundingClientRect 直接抄。
+       量不到（抽屉关着/高度还是 0）就清掉内联，退回 CSS 里的兜底公式，
+       绝不留一个 0 宽的空壳。 */
+    function mfSyncBox() {
+        var el = MF_D_EL;
+        if (!el) return;
+        var p = document.getElementById('right-nav-panel');
+        if (!p) return;
+        var r = p.getBoundingClientRect();
+        if (!r.width || r.width < 200 || !r.height || r.height < 200) {
+            el.style.left = '';
+            el.style.top = '';
+            el.style.width = '';
+            el.style.height = '';
+            el.style.borderRadius = '';
+            return;
+        }
+        el.style.right = 'auto';
+        el.style.left = Math.round(r.left) + 'px';
+        el.style.top = Math.round(r.top) + 'px';
+        el.style.width = Math.round(r.width) + 'px';
+        el.style.height = Math.round(r.height) + 'px';
+        /* 抽屉自己有 10px 圆角 + 1px 边，层是方的就会在角上多出两块直角 */
+        el.style.borderRadius = getComputedStyle(p).borderRadius;
+    }
+
+    function mfOpenLayer() {
+        var el = MF_D_EL;
+        if (!el) return;
+        if (MF_D_TIMER) { clearTimeout(MF_D_TIMER); MF_D_TIMER = null; }
+        el.classList.remove('mfd-hide');
+        mfSyncBox();
+        void el.offsetWidth;
+        el.classList.add('mfd-in');
+        MF_D_STATE = 'open';
+    }
+
+    function mfCloseDetail() {
+        var el = MF_D_EL;
+        if (!el || MF_D_STATE === 'closed') return;
+        MF_D_STATE = 'closing';
+        el.classList.remove('mfd-in');
+        if (MF_D_TIMER) clearTimeout(MF_D_TIMER);
+        MF_D_TIMER = setTimeout(function () {
+            MF_D_TIMER = null;
+            if (MF_D_STATE !== 'closing' || !MF_D_EL) return;
+            MF_D_EL.classList.add('mfd-hide');
+            MF_D_STATE = 'closed';
+        }, 420);
+    }
+
+    /* ── 拉聊天列表 ── */
+    function mfLoadChats(chid) {
+        var ctx = mfCtx();
+        if (!ctx || !ctx.characters) return;
+        var ch = ctx.characters[chid];
+        if (!ch) return;
+
+        fetch('/api/characters/chats', {
+            method: 'POST',
+            headers: ctx.getRequestHeaders(),
+            body: JSON.stringify({ avatar_url: ch.avatar }),
+        }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (data) {
+            /* 用户可能已经关掉/切到别的角色了，回来要对一下号 */
+            if (MF_D_CHID !== chid || !MF_D_EL) return;
+
+            var list = [];
+            if (data && typeof data === 'object' && data.error !== true) {
+                list = Object.values(data);
+            }
+            list = list.filter(function (x) { return x && x.file_name; });
+            list.sort(function (a, b) {
+                var ta = mfWhen(a.last_mes), tb = mfWhen(b.last_mes);
+                return (tb ? tb.getTime() : 0) - (ta ? ta.getTime() : 0);
+            });
+
+            MF_D_CHATS = list;
+            MF_D_CUR = list.length ? 0 : -1;
+            mfPaintChats();
+            mfPaintFreq(chid, list);
+        }).catch(function () {
+            if (MF_D_CHID !== chid || !MF_D_EL) return;
+            MF_D_CHATS = [];
+            MF_D_CUR = -1;
+            mfPaintChats();
+        });
+    }
+
+    function mfPaintChats() {
+        var el = MF_D_EL;
+        if (!el) return;
+        var ul = el.querySelector('.mfd-segs');
+        var cnt = el.querySelector('.mfd-sechead .cnt');
+        var ch = mfCtx().characters[MF_D_CHID];
+
+        cnt.textContent = MF_D_CHATS.length ? MF_D_CHATS.length + ' 段' : '';
+
+        if (!MF_D_CHATS.length) {
+            ul.innerHTML = '<li class="mfd-empty">还没有聊天记录，点右下角的 + 开一段新的</li>';
+            el.querySelector('.mfd-cta .n').textContent = '';
+            el.querySelector('.mfd-cta .t').textContent = '开始「' + (ch ? ch.name : '') + '」的第一段';
+            return;
+        }
+
+        ul.innerHTML = MF_D_CHATS.map(function (c, i) {
+            var d = mfWhen(c.last_mes);
+            var n = c.message_count != null ? c.message_count : '';
+            return '<li class="mfd-seg' + (i === MF_D_CUR ? ' on' : '') + '" data-i="' + i + '">'
+                + '<span class="sn">' + String(i + 1).padStart(2, '0') + '</span>'
+                + '<div class="sb">'
+                +   '<div class="st"><b>' + mfEsc(mfSegWhen(d)) + '</b>'
+                +   (n !== '' ? '<span class="dot">·</span><em>' + n + ' 条</em>' : '')
+                +   '</div>'
+                +   '<p class="ss">' + mfEsc(mfLine(c.preview_message)) + '</p>'
+                + '</div>'
+                + '<span class="sd">' + mfEsc(mfDayTxt(d)) + '</span>'
+                + '</li>';
+        }).join('');
+
+        /* ★ 2026-11-13 22:5x：原来单击只"高亮一下"，必须双击或点底部按钮才进聊天，
+           手机上根本没有双击 —— 用户原话「我点不下去聊天列表，那我要那个干嘛呀」。
+           现在单击就是进这段聊天，高亮只作为按下时的即时反馈。 */
+        ul.querySelectorAll('.mfd-seg').forEach(function (li) {
+            li.addEventListener('click', function () {
+                var i = Number(li.getAttribute('data-i'));
+                MF_D_CUR = i;
+                ul.querySelectorAll('.mfd-seg').forEach(function (x) { x.classList.remove('on'); });
+                li.classList.add('on');
+                mfPaintCta();
+                mfEnterChat(i);
+            });
+        });
+
+        mfPaintCta();
+    }
+
+    function mfPaintCta() {
+        var el = MF_D_EL;
+        if (!el) return;
+        var ch = mfCtx().characters[MF_D_CHID];
+        var c = MF_D_CHATS[MF_D_CUR];
+        var t = el.querySelector('.mfd-cta .t');
+        var n = el.querySelector('.mfd-cta .n');
+        if (!c) {
+            t.textContent = '开始「' + (ch ? ch.name : '') + '」的第一段';
+            n.textContent = '';
+            return;
+        }
+        var d = mfWhen(c.last_mes);
+        t.textContent = '继续这段「' + (ch ? ch.name : '') + '」';
+        n.textContent = d ? mfDayTxt(d) : '';
+    }
+
+    /* ── 三口径 ──
+       口径（原型定过，别乱调权重）：
+         热度 = 0.5×消息量(对数) + 0.5×近度(半衰 14 天)，全局归一化到 100
+       段数那 0.25 在原型里是"这个角色有几段聊天"的归一化，
+       实机上要拉每个角色的聊天列表才能算，代价是 N 次请求 —— 砍掉，
+       把权重让给近度。数字仍然可解释：聊得多 + 最近聊过 = 高。
+       ★ 绝不拿字数估 token / 估消息数，所有数字都来自接口返回。 */
+    function mfPaintFreq(chid, list) {
+        var el = MF_D_EL;
+        if (!el) return;
+        var ctx = mfCtx();
+        var ch = ctx.characters[chid];
+        if (!ch) return;
+
+        var msgs = 0;
+        var last = null;
+        list.forEach(function (c) {
+            msgs += Number(c.message_count || 0);
+            var d = mfWhen(c.last_mes);
+            if (d && (!last || d > last)) last = d;
+        });
+        /* message_count 缺失时退回角色自带的 chat_size（字节数，仅用于相对比较） */
+        var sizeFallback = !msgs && Number(ch.chat_size || 0) > 0;
+
+        var all = (ctx.characters || []).map(function (c) {
+            return Number(c.chat_size || 0);
+        });
+        var maxSize = Math.max.apply(null, all.concat([1]));
+        var maxMsgs = Math.max(msgs, 1);
+
+        var pMsg = msgs ? Math.log10(msgs + 1) / Math.log10(maxMsgs + 1) : 0;
+        var rec = last ? Math.pow(0.5, (Date.now() - last.getTime()) / (14 * 86400000)) : 0;
+        var rp = mfRecParts(last);
+
+        /* 消息量按全局最大 chat_size 归一，避免只有一两个角色时永远 100 分 */
+        var pTot = Math.log10(Number(ch.chat_size || 0) + 1) / Math.log10(maxSize + 1);
+        var hot = Math.round(100 * (0.5 * pTot + 0.5 * rec));
+
+        el.querySelector('[data-k="hot"]').textContent = msgs || sizeFallback ? hot : '—';
+        el.querySelector('[data-b="hot"]').style.width = (msgs || sizeFallback ? Math.max(3, hot) : 0) + '%';
+        el.querySelector('[data-s="hot"]').textContent = msgs ? (msgs + ' 条撑起来的') : (sizeFallback ? '按卡体积估的' : '聊过才有热度');
+        el.querySelector('.mfd-fhead .rank').textContent = msgs ? '共 ' + msgs + ' 条' : '';
+
+        el.querySelector('[data-k="msg"]').textContent = msgs || (sizeFallback ? '—' : 0);
+        el.querySelector('[data-b="msg"]').style.width = Math.round(pMsg * 100) + '%';
+        el.querySelector('[data-s="msg"]').textContent = list.length ? ('分布在 ' + list.length + ' 段里') : '';
+
+        el.querySelector('[data-k="rec"]').textContent = rp[0];
+        el.querySelector('[data-u="rec"]').textContent = rp[1];
+        el.querySelector('[data-b="rec"]').style.width = Math.round(rec * 100) + '%';
+        el.querySelector('[data-s="rec"]').textContent = last ? mfFullTxt(last) : '还没聊过';
+    }
+
+    /* ── 进聊天 / 新建 ── */
+    function mfHideNav() {
+        /* 右侧抽屉开着就把聊天区挡了。closedDrawer 存在 = 已经关着，别乱点。 */
+        var panel = document.querySelector('#right-nav-panel');
+        if (!panel) return;
+        if (panel.classList.contains('closedDrawer')) return;
+        var handle = document.querySelector('#rightNavDrawerIcon');
+        if (handle) handle.click();
+    }
+
+    /* 客户端里 getContext() 万一没暴露 selectCharacterById（不同前端 fork 有差异），
+       就退回"把这次点击还给原生"：找到那张卡，打上放行标记再点它一下。
+       ★ 不打标记是不行的 —— 我们自己的 document 捕获监听会再截一次，变成死循环。 */
+    function mfNativePickCard(chid) {
+        var card = document.querySelector('#rm_print_characters_block .character_select[data-chid="' + chid + '"]');
+        if (!card) return false;
+        MF_D_PASS = true;
+        try { card.click(); } finally { setTimeout(function () { MF_D_PASS = false; }, 0); }
+        return true;
+    }
+
+    function mfEnterChat(i) {
+        var ctx = mfCtx();
+        if (!ctx || MF_D_CHID == null) return;
+        var c = MF_D_CHATS[i];
+        var chid = Number(MF_D_CHID);
+
+        mfCloseDetail();
+
+        if (typeof ctx.selectCharacterById !== 'function') {
+            console.warn('[mf-detail] 没有 selectCharacterById，改用原生点击');
+            mfNativePickCard(chid);
+            return;
+        }
+
+        var p = ctx.selectCharacterById(chid);
+        Promise.resolve(p).then(function () {
+            if (!c || !c.file_name) return;
+            if (typeof ctx.openCharacterChat === 'function') return ctx.openCharacterChat(c.file_name);
+            /* 极少数 fork 不暴露 openCharacterChat：退一步去点原生聊天列表里的同名项 */
+            var shown = String(c.file_name).replace(/\.jsonl$/, '');
+            var items = document.querySelectorAll('#rm_chat_list .select_chat_block, #select_chat_div > *');
+            for (var k = 0; k < items.length; k++) {
+                if ((items[k].textContent || '').indexOf(shown) >= 0) { items[k].click(); return; }
+            }
+            console.warn('[mf-detail] 找不到 openCharacterChat，也没匹配到原生聊天条目', shown);
+            if (window.toastr) toastr.warning('这个客户端没开放聊天接口，请点右上角铅笔进原生面板');
+        }).then(function () {
+            setTimeout(mfHideNav, 120);
+        }).catch(function (err) {
+            console.error('[mf-detail] 进入聊天失败', err);
+            if (window.toastr) toastr.error('打开聊天失败，可以再点一次试试');
+        });
+    }
+
+    function mfNewChat() {
+        var ctx = mfCtx();
+        if (!ctx || MF_D_CHID == null) return;
+        var chid = Number(MF_D_CHID);
+        mfCloseDetail();
+        if (typeof ctx.selectCharacterById !== 'function') { mfNativePickCard(chid); return; }
+        Promise.resolve(ctx.selectCharacterById(chid)).then(function () {
+            setTimeout(function () {
+                mfHideNav();
+                /* 点原生按钮：会弹酒馆自己的「开始新聊天？」确认框，保持原生行为 */
+                var btn = document.querySelector('#option_start_new_chat');
+                if (btn) btn.click();
+            }, 160);
+        });
+    }
+
+    /* ── 拦截点击 ── */
+    function mfBulkMode() {
+        var b = document.querySelector('#bulkSelectAllButton');
+        return !!(b && b.style.display !== 'none');
+    }
+
+    function mfGuardStyle() {
+        /* 酒馆切暗色是给 body 加 .dark；这里只需要保证详情页跟着变，
+           变量选择器已经写成 body.dark #mf-detail，无需额外处理。 */
+    }
+
+    function initCharDetail() {
+        if (document.body.classList.contains('mf-detail-js')) return;
+        document.body.classList.add('mf-detail-js');
+        mfGuardStyle();
+
+        /* pointerdown 记坐标：拖拽排序时也会派发 click，不能当成点击 */
+        document.addEventListener('pointerdown', function (e) {
+            MF_D_DOWN = { x: e.clientX, y: e.clientY };
+        }, true);
+
+        document.addEventListener('click', function (e) {
+            if (MF_D_PASS) return;
+            var card = e.target && e.target.closest ? e.target.closest('.character_select') : null;
+            if (!card) return;
+            /* 只在角色列表面板里生效，别的界面有同名结构就放过 */
+            if (!card.closest('#rm_print_characters_block')) return;
+
+            /* 1. 收藏星标：原生自己的事 */
+            if (e.target.closest('.ch_fav_icon')) return;
+            /* 2. 批量编辑中：点击是勾选 */
+            if (mfBulkMode()) return;
+            /* 3. 拖拽：位移超过 6px 不算点击 */
+            if (MF_D_DOWN) {
+                var dx = Math.abs(e.clientX - MF_D_DOWN.x);
+                var dy = Math.abs(e.clientY - MF_D_DOWN.y);
+                if (dx > 6 || dy > 6) return;
+            }
+
+            var raw = card.getAttribute('data-chid');
+            if (raw == null) return;
+            var chid = Number(raw);
+            if (isNaN(chid)) return;
+
+            /* ★ 在这一层掐断，jQuery 的 document 委托（冒泡阶段）就收不到了 */
+            e.stopPropagation();
+            e.preventDefault();
+
+            mfOpenDetail(chid);
+        }, true);
+
+        /* 窗口尺寸变了、抽屉宽度跟着 --sheldWidth 变了 —— 层要重新贴一次 */
+        window.addEventListener('resize', function () {
+            if (MF_D_STATE === 'open') mfSyncBox();
+        });
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 12 · 面板顶部折叠（世界书 / 预设）
+       ─────────────────────────────────────────────────────────────────────
+       【用户口径】
+       「最主要的还是那些角色的界面，还有那个世界书和预设都有这样的问题，
+         就是上面那里一大堆东西，然后导致下面主要的内容突出不出来。」
+       拍板：统一收成一个「⋯」，点开才展开（和角色页同一套）。
+
+       【世界书的上半截到底占了多少】
+       #WorldInfo 顶部依次是：
+         #WorldInfoheader                  拖拽把手
+         .flex-container.alignitemscenter  锁 + 标题
+         #wiTopBlock                       「Active World(s)」多选 + 全局激活设置
+         #world_popup                      新建/选择/导入/导出 + 条目列表
+       #wiTopBlock 里那个 <select id="world_info" multiple> 默认就摊开 4 行，
+       加上标题、留白，光是被折叠的这一块桌面就吃掉 ~200px，手机上剩不下几行。
+
+       【折叠的是哪块】
+       #wiTopBlock —— 它是"设置一次就不动"的东西（哪些世界书全局生效、扫描深度）。
+       新建/选择/导入那行（#world_popup 顶部）保留常显，那是主要操作，收了反而难用。
+
+       【安全策略（这条最重要）】
+       找不到 #WorldInfo / #wiTopBlock / 标题行，就**一个 class 都不加**，
+       面板保持酒馆原样。宁可"没效果"，也绝不"改坏别人的面板"。
+       ═════════════════════════════════════════════════════════════════════ */
+
+    var MF_FOLD_TIMER = null;
+
+    function mfFoldBtn(wrap, flagClass, label) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mf-fold-btn';
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/>'
+            + '<circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            wrap.classList.toggle(flagClass);
+        });
+        return btn;
+    }
+
+    /* ── 世界书 ── */
+    function mfFoldWorldInfo() {
+        var wi = document.getElementById('WorldInfo');
+        if (!wi || wi.classList.contains('mf-wi-fold')) return;
+        var top = document.getElementById('wiTopBlock');
+        var head = document.getElementById('WorldInfoheader');
+        if (!top || !head) return;
+        var titleRow = head.nextElementSibling;
+        if (!titleRow) return;
+
+        wi.classList.add('mf-wi-fold');
+        titleRow.appendChild(mfFoldBtn(wi, 'mf-wi-open', '展开/收起世界书设置'));
+    }
+
+
+    /* ── 预设（左栏 AI 响应配置 / #left-nav-panel）──
+       用户选的口径：「全收：只留预设下拉 + 提示词列表」。
+
+       【结构（上游 index.html 核对过，别凭印象改）】
+       #left-nav-panel
+         #left-nav-panelheader            拖拽把手
+         #lm_button_panel_pin_div         锁
+         #clickSlidersTips                "点数字可手输" 的提示条
+         .scrollableInner > #ai_response_configuration   直接子块只有 4 个：
+             #respective-presets-block        预设：每种 API 一组（标题+导入导出删 / 下拉+更新改名另存）
+             #common-gen-settings-block       回复长度、上下文长度
+             #respective-ranges-and-temps     温度/top_p 那一大坨采样滑条
+             #advanced-ai-config-block        高级设置（内联抽屉）+ ★#completion_prompt_manager 提示词列表
+       → 所以收起态 = 藏 2、3 两个块 + 预设块里的标题行和图标簇，
+         保留 #respective-presets-block 的 <select> 和 #advanced-ai-config-block（提示词列表在那儿）。
+
+       【为什么不在 CSS 里写死 :not(:has(#completion_prompt_manager))】
+       :has() 在旧 WebView 直接丢整条规则（静默不生效），排查时最难查。
+       这里用 JS 精确标记，命中什么藏什么，出问题一眼能看出是哪几个节点。
+
+       【安全策略同世界书】
+       #left-nav-panel / #ai_response_configuration / #completion_prompt_manager
+       任何一个找不到 → 一个 class 都不加。 */
+    function mfFoldPreset() {
+        var panel = document.getElementById('left-nav-panel');
+        var cfg = document.getElementById('ai_response_configuration');
+        var pm = document.getElementById('completion_prompt_manager');
+        if (!panel || !cfg || !pm) return;
+        if (panel.classList.contains('mf-pv-fold')) return;
+
+        var hide = function (el) { if (el) el.classList.add('mf-pv-hide'); };
+
+        /* 1. 采样块整块收走 */
+        hide(document.getElementById('common-gen-settings-block'));
+        hide(document.getElementById('respective-ranges-and-temps'));
+        hide(document.getElementById('clickSlidersTips'));
+
+        /* 2. 预设块只留下拉：标题行 + 图标簇收掉。
+           ★ 判据是「这一行里没有 select」才收 —— 图标簇和 select 在同一行，
+             直接按 class 收会连下拉一起收掉（踩过）。
+             注意：这几行是每种 API 各一份，全都处理，隐藏的那些看不见而已。 */
+        var presets = document.getElementById('respective-presets-block');
+        if (presets) {
+            Array.prototype.forEach.call(presets.querySelectorAll('.standoutHeader'), hide);
+            Array.prototype.forEach.call(presets.querySelectorAll('.flex-container'), function (row) {
+                if (!row.querySelector('select')) row.classList.add('mf-pv-hide');
+            });
+        }
+
+        panel.classList.add('mf-pv-fold');
+
+        /* 3. ⋯ 按钮塞进预设下拉那一行的末尾（图标收掉后正好在最右） */
+        Array.prototype.forEach.call(panel.querySelectorAll('select[id^="settings_preset"]'), function (sel) {
+            var row = sel.parentElement;
+            if (!row || row.querySelector('.mf-fold-btn')) return;
+            row.appendChild(mfFoldBtn(panel, 'mf-pv-open', '展开/收起预设参数'));
+        });
+    }
+
+    function initPanelFolds() {
+        if (document.body.classList.contains('mf-fold-js')) {
+            mfFoldWorldInfo();
+            mfFoldPreset();
+            return;
+        }
+        document.body.classList.add('mf-fold-js');
+        mfFoldWorldInfo();
+        mfFoldPreset();
+
+        /* 酒馆会在切账号/重连后重建一部分面板节点，按钮跟着节点一起没了。
+           2s 一次的巡检只在"没有按钮"时才动手，平时是空转。 */
+        if (!MF_FOLD_TIMER) {
+            MF_FOLD_TIMER = setInterval(function () {
+                mfFoldWorldInfo();
+                mfFoldPreset();
+            }, 2000);
+        }
     }
 
 
@@ -5412,6 +7699,18 @@
 
         APP.modules.apiPanel = true;
         initApiPanel();
+
+        APP.modules.chatPhoto = true;
+        initChatPhoto();
+
+        APP.modules.charWall = true;
+        initCharWall();
+
+        APP.modules.charDetail = true;
+        initCharDetail();
+
+        APP.modules.panelFolds = true;
+        initPanelFolds();
 
         /* 旧的跨书搜索栏被全功能面板取代；函数保留在上面，回滚只需把这两行换回去 */
         APP.modules.worldPanel = true;

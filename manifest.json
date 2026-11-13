@@ -5,8 +5,8 @@
   "optional": [],
   "js": "index.js",
   "css": "skin.css",
-  "author": "zhaoyichan",
-  "version": "2.0.4",
-  "homePage": "https://github.com/zhaoyichan/mf-tavern-skin",
+  "author": "local",
+  "version": "2.4.1",
+  "homePage": "",
   "auto_update": false
 }

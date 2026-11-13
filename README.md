@@ -9,7 +9,7 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.0.4；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.4.1；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | DOM 真相 | `#top-bar` 是 `absolute` 空壳（50vw×44），与 `#top-settings-holder` 是**兄弟节点**；9 个 drawer 全在 holder 里 |
 | 九个 drawer | `ai-config-button` / `sys-settings-button` / `advanced-formatting-button` / `WI-SP-button` / `user-settings-button` / `backgrounds-button` / `extensions-settings-button` / `persona-management-button` / `rightNavHolder` |
@@ -67,6 +67,11 @@
 | `index.js` → preset-panel | 预设面板（AI 响应配置）：生成参数折叠、token 总览、条目搜索、行内编辑、查找/替换、整体替换、自动存、占比条 |
 | `index.js` → world-panel | **世界书面板（v2.0.0）**：直接替掉原生 #WorldInfo 的内容区，三级列表 / 跨书搜索 / 全字段编辑 / 新建书与条目 / 批量 / 整本启停 / 全局激活设置，**改了就自动存** |
 | `index.js` → topbar | 顶栏改造：九个图标靠左一排、换成自己的线条 SVG、最左一颗折叠键（收起全部 / 记忆）、长按或右键任意图标可以单独隐藏，全部能恢复 |
+| `index.js` → api-panel | 连接配置面板：分组盒 + 整张表单（上下两层、零嵌套），新建走 pendingNew 虚线 ghost 行，保存才落库（localStorage `mf_api_profiles_v1`） |
+| `index.js` → chat-photo | 聊天里的照片：宽高解耦 + 裁剪框真联动、只底部渐变、形状/大小/渐变可调、收起时后端不渲染（IndexedDB 按角色名存） |
+| `index.js` → char-wall | **角色墙（v2.2.0）**：接管角色列表成 3 列墙 + 左上 2×2 hero，顶部四排按钮收进「⋯」。只加 class + 全 CSS，**不重建 DOM、不动原生事件** |
+| `index.js` → char-detail | **角色详情页（v2.4.1）**：点格子不再进编辑面板，而是**在右抽屉里**滑入一页；聊天列表走真实接口，点哪段进哪段 |
+| `index.js` → panel-folds | 世界书 / 预设面板顶部折叠：`#wiTopBlock`、采样滑条、预设标题行与图标簇收进标题行「⋯」，找得到节点才动手，找不到一个 class 都不加 |
 
 后续还会往里加：侧栏/抽屉统一、弹窗与表单。
 
@@ -495,3 +500,49 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
            initStyleGuard 源码）。主题槽位 styleIsSkin=true / disabled=false /
            textareaLen=137460 / inputCount=1；三颗按钮均 display:none、
            mes_stop 仍 block；桌面 1280px 回归通过；无 JS 异常。
+
+2.0.5 — 2026-11-07 世界书面板改走酒馆助手 API（`thFn()` 适配层，找不到函数就退老路、
+        绝不 throw）；删掉搜索模块的启动 preload —— 一次开抽屉 = 2.8MB×2 全部 JSON.parse，
+        这是当时的卡顿元凶之一
+2.0.6 — 2026-11-07 「整本书未启用」黄条每展开一次条目就多叠一条：`bookHeadHTML()` 返回
+        两个并列顶层 div（.bhead + .warn），增量渲染只替换 .bhead，旧 .warn 没人收走。
+        拆成 `bookHeadHTML()` + `bookWarnHTML()` + `syncHead()`，viewBook/renderOne/paint 全走它
+2.0.7 — 2026-11-07 连续关两个条目卡 / 关酒馆窗口会卡好几秒：点灯只改 1 个布尔，却整本
+        `JSON.stringify` + POST + emit。改两档保存（markDirty / flushNow），
+        「能接受改完不立刻写盘，只要别卡」是用户明确授权
+2.0.8 — 2026-11-07 切面板卡：对照实验关掉 `#top-settings-holder::before` 的 `blur(16px)`。
+        抽屉是从胶囊底下滑出来的，毛玻璃背后一直有东西在动；A 没关就切 B 时两个抽屉
+        同时在跑过渡，模糊代价翻倍
+2.0.9 — 2026-11-07 聊天区滚到底「被按住 1~2 秒」：本轮只补测量 —— 确认扩展没在 `#chat` 上
+        绑 scroll/touch/wheel，也没有 `background-attachment: fixed`
+2.0.10 — 2026-11-07 查「只渲染最近几层」：这是 ST 原生的 `chat_truncation` 机制
+        （`power_user.chat_truncation`，默认 `Number.MAX_SAFE_INTEGER`），**不要自己造**
+2.1.0 — 2026-11-13 角色墙 v3 + 角色详情页 v3 + 聊天照片真正落地（新增 chatPhoto 模块）；
+        整套抽掉金色换砖红 `--accent: #9c4a35`（用户原话「金色的话太廉价了」），
+        暗色下需提亮到 `#c9755c` 系
+2.2.0 — 2026-11-13 角色墙接管角色列表：只加 3 个 class + 全 CSS，不重建 DOM，
+        JS 只做标记（MutationObserver 只盯 childList，盯 attributes 会自激）
+2.2.1 — 2026-11-13 墙的实机翻车三修：① flex 下 `.avatar` 被 2:3 固有高撑住不收缩 →
+        名字条被顶出卡片裁掉（改 grid 两行 `minmax(0,1fr) auto`）；② 原生 `.flex-container`
+        的 `gap:5px` 变成行间细缝；③ `.is_fav .avatar{outline:var(--golden)}` 黄边 +
+        `.ch_fav_icon{padding-right:54px;order:-1}` 把星标压成红长条。
+        ★ 验收必须**整表加载真实原生 CSS**，摘抄几条一定会漏
+2.3.0 — 2026-11-13 角色面板顶部四排（新建/导入/群聊 · 排序+搜索 · 标签 chips · 分页）
+        收进一个「⋯」，默认只剩「搜索框 + ⋯」；fixedTop 高 115 → 48。
+        「⋯」append 进 `#form_character_search_form`（那个 div 原生就是 flex），
+        不绝对定位、字号变了也不飘；展开态**必须显式写回原生 display**（`display:revert`
+        会把按钮条退回 block，当场散架）
+2.3.1 — 2026-11-13 点格子不再进编辑面板，改成滑入详情页：document **捕获阶段**拦
+        `.character_select`（放行收藏星标 / 批量编辑 / 位移 > 6px 的拖拽；
+        不能 stopImmediatePropagation，会打断别人的监听），
+        数据全走真实接口 `getContext()` + `POST /api/characters/chats`，
+        点哪段 → `selectCharacterById` + `openCharacterChat`
+2.4.0 — 2026-11-13 详情页三连崩修：① 700 居中像弹窗 → 满宽；② 单击只高亮点不进去
+        （手机上没双击）→ 单击即进；③ 退出卡 → 删满屏 `mix-blend-mode` 噪点与
+        `backdrop-filter`，关闭 0.42s 后 `display:none`，进出加状态机。
+        同时补上世界书 `#wiTopBlock` 与预设面板（采样滑条 / 预设标题行 / 图标簇）的折叠
+2.4.1 — 2026-11-13 ★ 详情页不是整屏，是**右抽屉里的一层**：宽度不自己算，直接抄
+        `#right-nav-panel` 的 `getBoundingClientRect()`（抽屉宽 = (100dvw - --sheldWidth
+        - 2px)/2，1920 窗口 479、1360 窗口 339，`--sheldWidth` 被拖过就会变）。
+        连带删掉按视口判断的两套媒体查询、三张数据卡改 `auto-fit`（窄到 339 自动两列）、
+        封面渐隐终点从卡片白改成正文底色（原来接缝处亮 15 阶，一条白线横贯）
