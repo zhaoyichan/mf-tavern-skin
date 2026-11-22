@@ -5507,3 +5507,302 @@ body.dark #mf-detail .mfd-banner .mfd-fade {
   border-color: var(--mf-line2, #d9d3c5);
 }
 
+
+/* ═════════════════════════════════════════════════════════════════════
+   模块 13 · 最近请求记录（v2.8.0）
+   ─────────────────────────────────────────────────────────────────────
+   主人要求把「最近请求记录」收进扩链，这样电脑/手机同一份，
+   手机端就能卸载原来的 RecentRequestLog 扩展（那个会造成 6.5 秒启动长任务）。
+
+   配色全部走 --mf-* 变量，跟整套皮肤一致；暗色模式用 body.mf-rl-dark 切换。
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* ── 入口按钮（在角色搜索栏里，和「＋ 新建」并排） ── */
+#mf-reqlog-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-left: 4px;
+  border: 1px solid var(--mf-line2, #d9d3c5);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mf-ink2, #79746a);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+#mf-reqlog-btn svg { width: 14px; height: 14px; display: block; }
+#mf-reqlog-btn:hover {
+  color: var(--mf-ink, #45413a);
+  border-color: var(--mf-line2, #d9d3c5);
+  background: var(--mf-accent-bg, #efebe1);
+}
+/* 有记录时右上角一个小圆点（不显示数字，避免挤） */
+#mf-reqlog-btn[data-count]:not([data-count=""])::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mf-accent, #8d8271);
+  border: 1px solid var(--mf-paper, #fbf9f4);
+}
+
+/* ── 面板本体 ── */
+.mf-rl-panel {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: 420px;
+  height: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  background: var(--mf-paper, #fbf9f4);
+  border: 1px solid var(--mf-line2, #d9d3c5);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(96, 90, 76, .16);
+  z-index: 4000;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--mf-ink, #45413a);
+}
+.mf-rl-panel.mf-rl-open { display: flex; }
+.mf-rl-panel.mf-rl-dragging { user-select: none; }
+
+/* ── 标题栏 ── */
+.mf-rl-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--mf-line, #e7e2d7);
+  background: var(--mf-paper2, #f7f4ed);
+  cursor: move;
+  touch-action: none;
+}
+.mf-rl-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mf-ink, #45413a);
+  white-space: nowrap;
+}
+.mf-rl-count {
+  font-weight: 400;
+  color: var(--mf-ink3, #a9a49a);
+  font-size: 12px;
+}
+.mf-rl-tools { margin-left: auto; display: flex; gap: 4px; }
+.mf-rl-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-ink2, #79746a);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-rl-btn:hover { background: var(--mf-accent-bg, #efebe1); color: var(--mf-accent-deep, #6f6555); }
+.mf-rl-btn.mf-off { opacity: .38; }
+
+/* ── 内容区 ── */
+.mf-rl-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px 10px;
+}
+.mf-rl-empty {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--mf-ink3, #a9a49a);
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+
+/* ── 一条记录 ── */
+.mf-rl-item {
+  border: 1px solid var(--mf-line, #e7e2d7);
+  border-radius: 9px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  background: var(--mf-paper, #fbf9f4);
+}
+.mf-rl-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mf-ink2, #79746a);
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-rl-item-head:hover { background: var(--mf-paper2, #f7f4ed); }
+.mf-rl-caret { color: var(--mf-ink3, #a9a49a); font-size: 10px; }
+.mf-rl-time { color: var(--mf-ink, #45413a); font-variant-numeric: tabular-nums; }
+.mf-rl-src {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--mf-line2, #d9d3c5);
+}
+.mf-rl-src-native { color: var(--mf-ok, #7d8a6f); border-color: var(--mf-ok, #7d8a6f); }
+.mf-rl-src-plugin { color: var(--mf-accent-deep, #6f6555); border-color: var(--mf-accent, #8d8271); }
+.mf-rl-count2 { color: var(--mf-ink3, #a9a49a); font-size: 11px; }
+.mf-rl-copyall {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--mf-line2, #d9d3c5);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-ink2, #79746a);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-rl-copyall:hover { background: var(--mf-accent-bg, #efebe1); color: var(--mf-accent-deep, #6f6555); }
+
+/* ── 展开后的分组 ── */
+.mf-rl-groups { border-top: 1px solid var(--mf-line, #e7e2d7); }
+.mf-rl-grp {
+  position: relative;
+  padding: 7px 8px 7px 8px;
+  border-bottom: 1px dashed var(--mf-line, #e7e2d7);
+}
+.mf-rl-grp:last-child { border-bottom: none; }
+.mf-rl-role {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 3px;
+  letter-spacing: .02em;
+}
+.mf-rl-role-system { color: var(--mf-accent-deep, #6f6555); }
+.mf-rl-role-user { color: var(--mf-ok, #7d8a6f); }
+.mf-rl-role-assistant { color: var(--mf-accent, #8d8271); }
+.mf-rl-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--mf-ink2, #79746a);
+  max-height: 240px;
+  overflow: auto;
+}
+.mf-rl-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--mf-line2, #d9d3c5);
+  border-radius: 6px;
+  background: var(--mf-paper, #fbf9f4);
+  color: var(--mf-ink3, #a9a49a);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-rl-grp:hover .mf-rl-copy { opacity: 1; }
+
+/* ── 右下角缩放角 ── */
+.mf-rl-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--mf-line2, #d9d3c5) 50%, var(--mf-line2, #d9d3c5) 58%, transparent 58%,
+                    transparent 68%, var(--mf-line2, #d9d3c5) 68%, var(--mf-line2, #d9d3c5) 76%, transparent 76%);
+}
+
+/* ── 暗色模式 ── */
+body.mf-rl-dark .mf-rl-panel {
+  --mf-paper: #24211d;
+  --mf-paper2: #2c2823;
+  --mf-bg: #1c1a17;
+  --mf-ink: #e8e3da;
+  --mf-ink2: #b3aca0;
+  --mf-ink3: #857e73;
+  --mf-line: #3a352e;
+  --mf-line2: #4a443b;
+  --mf-accent: #b3a488;
+  --mf-accent-deep: #cdbfa4;
+  --mf-accent-bg: #34302a;
+  --mf-ok: #93a184;
+  --mf-danger: #c07a6e;
+  background: var(--mf-paper);
+  border-color: var(--mf-line2);
+  color: var(--mf-ink);
+}
+body.mf-rl-dark .mf-rl-head { background: var(--mf-paper2); border-bottom-color: var(--mf-line); }
+body.mf-rl-dark .mf-rl-text { color: var(--mf-ink2); }
+body.mf-rl-dark .mf-rl-copy { background: var(--mf-paper); color: var(--mf-ink3); }
+body.mf-rl-dark .mf-rl-item { background: var(--mf-paper); }
+body.mf-rl-dark .mf-rl-item-head:hover { background: var(--mf-paper2); }
+
+/* ── 手机：面板全屏 ── */
+@media (max-width: 520px) {
+  .mf-rl-panel {
+    left: 0 !important;
+    right: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+  .mf-rl-resize { display: none; }
+  .mf-rl-copy { opacity: 1; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   ★ v2.8.0 感知性能：启动期间给「非聊天区」一点半透明
+   ─────────────────────────────────────────────────────────────────────
+   主人的原话：「刚进入界面的话，你可以先让消息显示出来，
+     就是把实际上的卡转换成眼光上的这种快」
+
+   扩链 index.js 要到 ~10 秒才执行完（而 FCP 才是 400ms），
+   主人这段时间看到的是一堆空面板 → 视觉上就是「卡住了」。
+   boot() 现在分两批：先给聊天区/输入框，第二批才是面板类。
+   启动标记 mf-booting 在这期间给非聊天区 0.4 透明度 ——
+   看着像「正在就绪」，而不是空白或冻住。
+   ★ 兜底在 boot() 里：1.5 秒后无论如何摘掉这个标记，
+     就算第一批抛异常也不会一直半透明。
+   ═════════════════════════════════════════════════════════════════════ */
+body.mf-booting #left-nav-panel,
+body.mf-booting #right-nav-panel,
+body.mf-booting #rm_print_characters_block,
+body.mf-booting #rm_characters_block {
+  opacity: .4;
+  transition: opacity .4s ease;
+}
+body.mf-booting #chat,
+body.mf-booting #form_sheld,
+body.mf-booting #top-bar {
+  opacity: 1;
+}

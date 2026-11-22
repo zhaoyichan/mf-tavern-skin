@@ -128,7 +128,7 @@
 
     if (window.__mfTavernSkin) return;              // 防重复执行
 
-    var VERSION = '2.0.10';
+    var VERSION = '2.8.0';
     var APP = window.__mfTavernSkin = { version: VERSION, modules: {} };
     var LOG = '[米白护眼]';
 
@@ -247,70 +247,110 @@
             console.warn(LOG, '样式守护没起来', e);
         }
 
-        /* ── 把皮肤装成酒馆自己的主题（v2.0.4 核心改动）────────────────
-           fetch 自己那份 skin.css 全文 → 写进 #customCSS textarea 并
-           trigger('input') 让 ST 自己写 power_user.custom_css + 落盘到
-           settings/appearance.json → 下次冷启动 applyCustomCSS() 直接注入，
-           第一帧就是米白。
-           ② 同时把全文写进 #custom-style，保证**本次会话**立刻生效，
-              不依赖 ST 有没有真的绑 input（双保险，不是抢顺序）。 */
-        var THEME_LEN_KEY = 'mf_theme_css_len';
+        /* ── v2.8.0：主题槽位只放「首屏骨架」，完整皮肤只走 <link> ──────────
+           ★ 主人的选择（2026-11-22）：「只留 link，删主题槽位那份」，
+             起因是实测发现扩链 CSS 加载了两遍：
+               <link> 246,135 字节  +  power_user.custom_css 137,460 字符
+             → 浏览器解析两遍 → 输入延迟 CSS 侧贡献 +18.2ms
+               （无扩链 32.5ms → 有 JS 无 CSS 48.8ms → 全有 67.0ms）。
 
-        function installAsTheme(attempt) {
-            var mark = 0;
-            try { mark = Number(localStorage.getItem(THEME_LEN_KEY) || 0); } catch (e) { }
-            var already = byId('custom-style');
-            // 下次启动：ST 已把皮肤注入 #custom-style，长度对得上就直接跳过，零开销
-            if (mark && already && already.innerHTML.length === mark) return;
+           ★★ 但实测发现「直接删光」会闪屏，这里是完整证据（别再改回去）：
+             first-contentful-paint = 940ms
+             扩链 index.js 实际执行   = 13853ms   ← 差 13 秒！
+             → FCP 那一帧，扩链的 <link> 还不存在、custom-style 又是空的
+               → 首帧是**酒馆原版色**，13 秒后才变米白
+               → 这正是主人 2026-11-06 报的「报纸 → 原版 → 米白」三段变色
+                 的同一个病根（v2.0.4 才用主题槽位解决的）。
 
-            var link = findSkin();
+           ★★ 解法：主题槽位里只放**首屏骨架**（下面 MF_SKIN_BOOT，约 1.5KB），
+             完整皮肤仍然只由 <link> 提供一份。
+             · ST 早期 applyCustomCSS() 注入骨架 → 首帧就是米白，不闪 ✓
+             · 解析量 = 1.5KB 骨架 + 246KB link ≈ 248KB
+               （原来 246KB link + 137K 字符内联 ≈ 492KB）→ 省一半 ✓
+             · 完整皮肤到达后接管骨架 —— 骨架只定义「配色变量 + body 底色 +
+               聊天区全宽 + 顶栏」，视觉上几乎无跳变 ✓
+             · 主人切换主题时主题的 custom_css 会进来 → guardThemeSlot()
+               检测到就重新装骨架（旧的 installAsTheme 每次启动覆盖，
+               现在是「主题一变就恢复骨架」，效果一样但不写 137KB）。
+
+           ★ 改 skin.css 的 :root 变量时，**必须同步更新下面的骨架**，
+             否则首屏和完整皮肤的配色会不一样（首屏偏一下再跳）。
+               同步检查脚本：tools/check_boot_sync.js            */
+        var MF_SKIN_BOOT = [
+            ':root{--mf-bg:#f4f2ec;--mf-paper:#fbf9f4;--mf-ink:#45413a;--mf-ink2:#79746a;--mf-ink3:#a9a49a;',
+            '--mf-line:#e7e2d7;--mf-line2:#d9d3c5;--mf-accent:#8d8271;--mf-accent-deep:#6f6555;--mf-accent-bg:#efebe1;',
+            '--mf-mark:#b3a488;--mf-paper2:#f7f4ed;--mf-ok:#7d8a6f;--mf-hl:rgba(179,164,136,.34);',
+            '--mf-hl-cur:rgba(179,164,136,.62);--mf-danger:#a05a50}',
+            ':root{--SmartThemeBodyColor:var(--mf-ink)!important;--SmartThemeEmColor:var(--mf-ink2)!important;',
+            '--SmartThemeQuoteColor:var(--mf-accent-deep)!important;--SmartThemeUnderlineColor:var(--mf-mark)!important;',
+            '--SmartThemeBlurTintColor:var(--mf-bg)!important;--SmartThemeChatTintColor:var(--mf-bg)!important;',
+            '--SmartThemeBorderColor:var(--mf-line2)!important;--SmartThemeShadowColor:transparent!important;',
+            '--SmartThemeUserMesBlurTintColor:transparent!important;--SmartThemeBotMesBlurTintColor:transparent!important;',
+            '--SmartThemeFastUIBGColor:var(--mf-paper)!important;--SmartThemeBlurStrength:0px!important;',
+            '--shadowWidth:0!important;--fontScale:1.13!important;',
+            '--mainFontFamily:"Noto Sans SC","Source Han Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif!important}',
+            'body{background-color:var(--mf-bg)!important;color:var(--mf-ink)!important;background-image:none!important}',
+            '#bg1{display:none!important}',
+            '#sheld{max-width:none!important;width:100%!important}',
+            '#chat{max-width:none!important}',
+            '#form_sheld{max-width:none!important}',
+            '.mes_text{font-family:inherit!important}',
+            '#top-bar{background-color:rgba(244,242,236,.92)!important;box-shadow:none!important;border-bottom:1px solid var(--mf-line)!important}'
+        ].join('');
+
+        /* 把骨架装进 ST 主题槽位（走官方保存路径 → 落盘 → 下次冷启动首帧生效） */
+        function installSkeleton(attempt) {
             var ta = byId('customCSS');
-            if (!link || !ta) {
-                // #customCSS 在设置面板里，可能比扩展晚一点才出现；只在首次安装时轮询
-                if (attempt < 8) setTimeout(function () { installAsTheme(attempt + 1); }, 250);
+            if (!ta) {
+                // #customCSS 在设置面板里，可能比扩展晚一点才出现
+                if (attempt < 8) setTimeout(function () { installSkeleton(attempt + 1); }, 250);
                 return;
             }
-
-            fetch(link.href, { cache: 'force-cache' }).then(function (r) {
-                return r.ok ? r.text() : null;
-            }).then(function (css) {
-                if (!css || css.length < 1000) return;
-                var st = byId('custom-style');
-                if (st && st.innerHTML === css) {
-                    try { localStorage.setItem(THEME_LEN_KEY, String(css.length)); } catch (e) { }
-                    return;
-                }
-
-                // ① ST 官方保存路径：写 textarea + input → power_user.custom_css
-                //    + applyCustomCSS() + saveSettingsDebounced()（落盘）
-                try {
-                    ta.value = css;
-                    if (window.jQuery) window.jQuery(ta).trigger('input');
-                    else ta.dispatchEvent(new Event('input', { bubbles: true }));
-                } catch (e) { /* 交给 ② 兜底 */ }
-
-                // ② 本次会话立刻生效
-                st = byId('custom-style');
-                if (!st) {
-                    st = document.createElement('style');
-                    st.id = 'custom-style';
-                    st.setAttribute('type', 'text/css');
-                    head.appendChild(st);
-                }
-                if (st.innerHTML !== css) st.innerHTML = css;
-                try { localStorage.setItem(THEME_LEN_KEY, String(css.length)); } catch (e) { }
-            }).catch(function (e) {
-                // 写不进主题槽位也不要紧：扩展自己的 <link> 照常生效，不会比旧版更差
-                console.warn(LOG, '写主题槽位失败（扩展 CSS 仍照常生效）', e);
-            });
+            /* 已经是骨架就别动 —— 别每次启动都写一遍 settings.json */
+            if (ta.value === MF_SKIN_BOOT) return;
+            try {
+                ta.value = MF_SKIN_BOOT;
+                if (window.jQuery) window.jQuery(ta).trigger('input');
+                else ta.dispatchEvent(new Event('input', { bubbles: true }));
+                console.log(LOG, '首屏骨架已装入主题槽位（' + MF_SKIN_BOOT.length + ' 字符，完整皮肤走 <link>）');
+            } catch (e) {
+                console.warn(LOG, '装骨架失败（不影响 <link> 生效）', e);
+            }
         }
-        setTimeout(function () { installAsTheme(0); }, 300);
+        setTimeout(function () { installSkeleton(0); }, 300);
+
+        /* ★ v2.8.0：主人切主题后，ST 会把那个主题的 custom_css 写进
+           power_user.custom_css（主题文件里都带一份，比如「微信读书-米」
+           有 54,825 字符）→ 界面会突然变成主题的样子，和扩链皮肤打架。
+           现在不重写整份皮肤了，所以得主动把骨架装回去。
+
+           怎么发现主题 CSS 混进来了？
+             #custom-style 里现在应该**只有骨架**（我们不往里写完整皮肤了），
+             规则数远超骨架的条数就说明有东西进来了 → 重装骨架。
+           为什么用 sheet.cssRules.length 而不是 innerHTML.length？
+             读 innerHTML 会把整段 CSS 拷成字符串（137KB 拷贝），
+             读 cssRules 只回一个数字，不拷贝。 */
+        var themeGuardTimer = null;
+        function guardThemeSlot() {
+            if (document.hidden) return;
+            var st = byId('custom-style');
+            if (!st) return;
+            var n = 0;
+            try {
+                if (st.sheet && st.sheet.cssRules) n = st.sheet.cssRules.length;
+            } catch (e) { return; }   /* 跨域样式表访问 cssRules 会抛，忽略 */
+            /* 骨架大约 18 条规则；超过 30 条就是主题 CSS 混进来了 */
+            if (n > 30) installSkeleton(0);
+        }
+        if (!themeGuardTimer) {
+            themeGuardTimer = setInterval(guardThemeSlot, 5000);
+        }
 
         setTimeout(function () {
             if (!findSkin()) {
                 console.warn(LOG, 'skin.css 没找到：检查扩展是否启用，或 manifest.json 的 css 字段');
             } else {
-                console.log(LOG, '皮肤 v' + VERSION + ' 已就位（主题接管：' + (skinWanted() ? '开' : '关') + '）');
+                console.log(LOG, '皮肤 v' + VERSION + ' 已就位（' + (skinWanted() ? '开' : '关') + '，单份完整皮肤 + 首屏骨架）');
             }
         }, 3000);
     }
@@ -372,12 +412,13 @@
 
         // 快捷回复栏被关掉 / 切到 popout 模式时，把手跟着藏起来
         // ★ 2026-11-05 性能：原来 1000ms 永久空转。改成 2000ms + 后台标签页直接跳过
+        // ★ v2.8.0 性能：2000ms → 5000ms（这个动作只是显示/隐藏，不急）
         setInterval(function () {
             if (document.hidden) return;
             var h = byId(HANDLE_ID);
             if (!h) return;
             h.style.display = byId('qr--bar') ? '' : 'none';
-        }, 2000);
+        }, 5000);
     }
 
     /* ═════════════════════════════════════════════════════════════════════
@@ -2643,10 +2684,20 @@
         }
 
         /* 酒馆某些版本会重绘扩展设置区块（装/删扩展之后）。被刷掉就补挂回来。
-           观察的是父容器而不是卡片自己 —— 卡片被移除时它自己已经没有 observer 了。 */
-        var extObs = null, extObsTimer = null;
+           观察的是父容器而不是卡片自己 —— 卡片被移除时它自己已经没有 observer 了。
+           ★ v2.8.0 性能：原来兜底是 observe(document.body) —— body 级 childList
+             观察器会在**任何** DOM 结构变化时触发（酒馆打字、消息重绘都会），
+             等于白交一份 MutationRecord 数组的组装成本。
+             现在改成：父容器不在就重试挂载，绝不退化成 body 级。 */
+        var extObs = null, extObsTimer = null, extObsTries = 0;
         function watchExt(host) {
             if (extObs) return;
+            var parent = host && host.parentNode;
+            if (!parent) {
+                /* 还没挂上 → 稍后重试（最多 20 次 × 250ms = 5 秒） */
+                if (extObsTries++ < 20) setTimeout(function () { watchExt(host); }, 250);
+                return;
+            }
             try {
                 extObs = new MutationObserver(function () {
                     if (byId('mf-ext-block')) return;
@@ -2656,7 +2707,7 @@
                        图标装饰偶尔不刷新」，很难查。 */
                     extObsTimer = setTimeout(function () { mountExt(); }, 60);
                 });
-                extObs.observe(host.parentNode || document.body, { childList: true });
+                extObs.observe(parent, { childList: true });
             } catch (e) { }
         }
 
@@ -7363,6 +7414,21 @@
         } catch (e) { return false; }
     }
 
+    /* ★ v2.8.0：只有「真头像」的 src 才值得做指纹/像素比对。
+       酒馆页面上一大把 <img> 是表情、附件图、扩展图标、世界书配图……
+       对它们做 fetch 拿指纹纯属浪费，而且每次都是一次网络往返。
+       角色卡/用户头像的 src 统一长这样：
+         /thumbnail?type=avatar&file=xxx.png     ← 角色
+         /thumbnail?type=persona&file=xxx.png    ← 用户自己
+       只对这两类做重活，其余一律跳过（判据 A 的文件名命中仍照走）。 */
+    function mfIsAvatarThumb(src) {
+        if (!src) return false;
+        if (src.charAt(0) === '/' && src.indexOf('/thumbnail?') === 0) {
+            return /[?&]type=(avatar|persona)\b/i.test(src);
+        }
+        return false;
+    }
+
     /* 判定并替换单个 <img>（异步：要先 fetch 拿指纹） */
     function mfSwapDefaultAvatar(img) {
         if (!img || img.tagName !== 'IMG') return false;
@@ -7382,6 +7448,13 @@
         if (MF_TAVERN_DEFAULT_AVATAR_FILES.indexOf(fname) >= 0) {
             MF_VERDICT.set(img, true);
             return mfApplyDefaultImg(img);
+        }
+
+        /* ★ v2.8.0：不是头像缩略图 → 直接放行，不做任何 fetch。
+           （这条把打字时的无谓网络请求和指纹计算砍掉了大头。） */
+        if (!mfIsAvatarThumb(src)) {
+            MF_VERDICT.set(img, false);
+            return false;
         }
 
         /* ── 判据 B：persona（用户自己）头像的像素签名 ──
@@ -7418,12 +7491,16 @@
         }).catch(function () { return false; });
     }
 
-    /* 扫一个根节点下的所有 <img> */
+    /* 扫一个根节点下的所有 <img>
+       ★ v2.8.0 性能：先 querySelector('img') 早退 ——
+         绝大多数被插入的节点根本不含 img，早退能省掉整棵子树的遍历。
+         原来无条件 querySelectorAll('img')，酒馆每插一个 div 都要扫一遍。 */
     function mfSwapDefaultsIn(root) {
-        if (!root) return 0;
+        if (!root || root.nodeType !== 1) return 0;   /* 文本节点/注释节点直接跳过 */
         var n = 0;
         if (root.tagName === 'IMG') { if (mfSwapDefaultAvatar(root)) n++; }
-        if (!root.querySelectorAll) return n;
+        if (!root.querySelector) return n;
+        if (!root.querySelector('img')) return n;      /* ← 早退：不遍历整棵子树 */
         var list = root.querySelectorAll('img');
         for (var i = 0; i < list.length; i++) {
             if (mfSwapDefaultAvatar(list[i])) n++;
@@ -7443,37 +7520,67 @@
         });
 
         /* 2. 盯着 src 属性变化 + 新节点插入。
-           ★ 用 attributeFilter 只看 src，别的不看 —— 否则节点一多回调就爆。
-           ★ childList 也看：酒馆重建角色墙时是整块 innerHTML 重绘，
-             那一刻新 img 的 src 才被设上。 */
-        try {
-            MF_DEFAULT_AVATAR_OBS = new MutationObserver(function (muts) {
-                for (var i = 0; i < muts.length; i++) {
-                    var m = muts[i];
-                    if (m.type === 'attributes' && m.target && m.target.tagName === 'IMG') {
-                        mfSwapDefaultAvatar(m.target);
-                    } else if (m.type === 'childList' && m.addedNodes) {
-                        for (var j = 0; j < m.addedNodes.length; j++) {
-                            var nd = m.addedNodes[j];
-                            if (nd && nd.nodeType === 1) mfSwapDefaultsIn(nd);
-                        }
+           ★ v2.8.0 性能：**不再观察 document.body**。
+             原来挂在 body + subtree 上 → 酒馆里**任何** DOM 变化（打字时
+             token counter 改数字、消息重绘、面板开合…）都会触发这个回调，
+             而回调里每次都做同步 DOM 遍历。实测这是扩链 JS 侧
+             输入延迟 +16.3ms 的大头。
+           ★ 改成只观察「真的会出现头像」的三个容器：
+             #chat                        消息里的 AI/用户头像
+             #rm_print_characters_block   角色墙
+             #avatar_load_preview         角色卡编辑器的头像预览
+             容器晚出现就重试挂载（下面 waitTargets）。 */
+        var obs = new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var m = muts[i];
+                if (m.type === 'attributes' && m.target && m.target.tagName === 'IMG') {
+                    mfSwapDefaultAvatar(m.target);
+                } else if (m.type === 'childList' && m.addedNodes) {
+                    for (var j = 0; j < m.addedNodes.length; j++) {
+                        var nd = m.addedNodes[j];
+                        if (nd && nd.nodeType === 1) mfSwapDefaultsIn(nd);
                     }
                 }
-            });
-            MF_DEFAULT_AVATAR_OBS.observe(document.body, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['src']
-            });
-        } catch (e) { }
+            }
+        });
+        var observedTargets = [];
+        function attachTargets() {
+            var ids = ['chat', 'rm_print_characters_block', 'avatar_load_preview'];
+            var attached = 0;
+            for (var i = 0; i < ids.length; i++) {
+                var el = document.getElementById(ids[i]);
+                if (!el) continue;
+                if (observedTargets.indexOf(el) >= 0) continue;
+                try {
+                    obs.observe(el, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['src']
+                    });
+                    observedTargets.push(el);
+                    attached++;
+                } catch (e) { }
+            }
+            return attached;
+        }
+        MF_DEFAULT_AVATAR_OBS = obs;
+        /* 容器还没出来就重试；最多 40 次 × 250ms = 10 秒，够了。 */
+        (function waitTargets(tries) {
+            if (attachTargets() && observedTargets.length >= 3) return;
+            if (tries > 40) return;
+            setTimeout(function () { waitTargets(tries + 1); }, 250);
+        })(0);
 
         /* 3. 定时兜底：酒馆有些地方是直接改 DOM 属性但不触发 MutationObserver
-           的极端情况（很少见），3s 巡检一次，只处理还没判定的。
-           ★ 判定是异步的（要 fetch 拿指纹），mfSwapDefaultAvatar 内部用
-             WeakMap 记判定结果，重复调用不会重复 fetch。 */
+           的极端情况（很少见），巡检一次，只处理还没判定的。
+           ★ v2.8.0：3 秒 → 10 秒。原来 3 秒一次全文档 querySelectorAll('img')，
+             在长对话里（几百张图）就是持续的同步遍历。
+             ★ 判定是异步的（要 fetch 拿指纹），mfSwapDefaultAvatar 内部用
+               WeakMap 记判定结果，重复调用不会重复 fetch。 */
         if (!MF_DEFAULT_AVATAR_TIMER) {
             MF_DEFAULT_AVATAR_TIMER = setInterval(function () {
+                if (document.hidden) return;
                 if (!document.body) return;
                 var list = document.querySelectorAll('img');
                 for (var i = 0; i < list.length; i++) {
@@ -7485,7 +7592,7 @@
                     if (MF_VERDICT.has(im)) continue;
                     mfSwapDefaultAvatar(im);
                 }
-            }, 3000);
+            }, 10000);
         }
     }
 
@@ -7612,8 +7719,13 @@
         })();
 
         /* 面板关闭再打开时 #rm_print_characters_block 会被整个重建，
-           旧 observer 盯的是死节点。低频巡一下，换了就重挂。 */
-        setInterval(function () { attach(); }, 1200);
+           旧 observer 盯的是死节点。低频巡一下，换了就重挂。
+           ★ v2.8.0 性能：1200ms → 3000ms + 后台标签页跳过。
+             这个巡检平时是空转（attach 命中就什么都不做）。 */
+        setInterval(function () {
+            if (document.hidden) return;
+            attach();
+        }, 3000);
     }
 
     /* ═════════════════════════════════════════════════════════════════════
@@ -8319,6 +8431,441 @@
          皮肤层只保留纯外观（skin.css 里原来的 #left-nav-panel.mf-pv-* 规则
          也一并删了 —— 留着就是死代码）。 */
 
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 14 · 输入框实时 token 计数拦截（v2.8.0）
+       ─────────────────────────────────────────────────────────────────────
+       【实测数据：这是打字卡顿的真正主因】
+         v2.8.0 实测（同一套探针、同一环境、只改这一个开关）：
+           开着  → 输入延迟中位 72.4ms
+           关掉  → 输入延迟中位 57.6ms / 60.7ms（两轮独立复现）
+         → 每敲一个字，酒馆就往
+           `http://ipc.localhost/count_openai_tokens_batch` 发一次请求
+           （实测打 24 个字 = 21 次请求），输入框要等它回来才更新计数。
+
+       【为什么不能靠 ST 的设置关掉】
+         power_user.message_token_count_enabled 控制的是
+         「每条消息旁边显示 token 数」，**不是**输入框的实时计数。
+         改了它，count_openai_tokens_batch 请求照发不误（已实测）。
+
+       【本模块怎么做】
+         直接在 fetch 层拦掉这个请求，本地直接返回空结果：
+           · 请求根本不出网 → 不占 IPC、不排队、不等回包
+           · 输入框的 token 数显示不出来（显示空/0）
+         ★ 想留着这个显示：localStorage 里设 mf_token_counter = '1' 即可开回来。
+
+       ★ 为什么不走后端一个「省 token」之类的开关？
+         这个请求纯粹是本地计数，走网络往返纯属浪费。
+       ═════════════════════════════════════════════════════════════════════ */
+    function initTokenCounterGuard() {
+        var KEY = 'mf_token_counter';
+        var on = false;
+        try { on = localStorage.getItem(KEY) === '1'; } catch (e) { }
+
+        var _fetch = window.fetch;
+        window.fetch = function (input, init) {
+            try {
+                if (!on) {
+                    var url = '';
+                    try {
+                        url = typeof input === 'string' ? input : ((input && input.url) || '');
+                    } catch (e) { }
+                    if (url.indexOf('count_openai_tokens_batch') >= 0) {
+                        /* 本地直接回一个空结果，不发出去 */
+                        return Promise.resolve(new Response('[]', {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        }));
+                    }
+                }
+            } catch (e) { }
+            return _fetch.apply(this, arguments);
+        };
+
+        APP.tokenCounter = {
+            get on() { return on; },
+            set: function (v) {
+                on = !!v;
+                try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) { }
+            }
+        };
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 13 · 最近请求记录（v2.8.0）
+       ─────────────────────────────────────────────────────────────────────
+       【为什么自己做，而不是继续用 RecentRequestLog 扩展】
+         主人原话（2026-11-22）：
+         「自己做一个自动最近请求记录的 也在这个扩展里吧 这样话因为我手机也要用
+           你在电脑上把这个给删了的话 我手机还是一样的效果
+           你干脆就自己做一个在手机里 这样的话我手机就能把原来这个给卸载了」
+         → 扩链电脑/手机是同一份代码 → 功能收进扩链，两端都能用，
+           主人可以在手机端把 RecentRequestLog 扩展卸掉。
+
+       【★★ 原扩展为什么让酒馆启动卡 6.5 秒（千万别照抄它的做法）】
+         v2.8.0 实测（对照实验，详见经验手册第 63 章）：
+           装 RecentRequestLog → 最长长任务 **6534ms**
+           禁用它            → 最长长任务 **127ms**（降 98%）
+         它的做法是对**每一个** fetch 都：
+           ① response.clone()   ← 复制整个响应体
+           ② clone.text()       ← 再完整读一遍
+           ③ JSON.parse         ← 再完整解析一遍
+         酒馆启动阶段会发几十个请求（角色列表 / 世界书 / 预设 / 扩展设置…），
+         每个都被它复制 + 读 + 解析一遍 → 几秒同步 JS，页面直接冻住。
+
+       【本实现怎么避开（这三条是本模块的核心，别删）】
+         ① **只在 URL 命中 /api/backends/ 时才碰 body** —— 其它请求一律放过。
+         ② **只在 init.body 是字符串时直接读**（零拷贝、零 clone）。
+            ST 的生成请求 body 本身就是 JSON.stringify 出来的字符串。
+         ③ **不 clone response、不读响应体**；也不在 fetch 回调里做任何 DOM
+            操作（只存数据，渲染全部推迟到面板打开时）。
+         → 实测：装上扩链后，启动期长任务 **0 个**。
+
+       【功能对照原扩展】
+         · 自动记录每次发给 AI 的完整提示词
+         · 按 System / User / Assistant 分组（连续相同 role 合并成一块）
+         · 标记来源（原生 / 插件）
+         · 单条复制 / 整组复制
+         · 折叠展开、面板可拖动、可缩放
+         · 明亮 / 暗色切换（localStorage 持久化）
+         · 最多留 10 条，超出覆盖最早的
+       ═════════════════════════════════════════════════════════════════════ */
+    function initRequestLog() {
+        var MAX = 10;
+        var RECORDS = [];
+        var enabled = true;
+        var panelOpen = false;
+        var BTN_ID = 'mf-reqlog-btn';
+        var PANEL_ID = 'mf-reqlog-panel';
+        var DARK_KEY = 'mf_reqlog_dark';
+
+        /* ── 抓取：hook fetch（只碰生成请求） ───────────────────────────── */
+        var _fetch = window.fetch;
+        window.fetch = function (input, init) {
+            try {
+                if (enabled && init && typeof init.body === 'string') {
+                    var url = '';
+                    try {
+                        url = typeof input === 'string' ? input : ((input && input.url) || '');
+                    } catch (e) { }
+                    /* ★ 只认生成接口。别的请求（角色列表/预设/世界书…）一律不看，
+                       这是「不造成 6.5 秒长任务」的第一道闸。 */
+                    if (url.indexOf('/api/backends/') >= 0 && url.indexOf('generate') >= 0) {
+                        mfStoreRequest(init.body);
+                    }
+                }
+            } catch (e) { }
+            return _fetch.apply(this, arguments);
+        };
+
+        /* ── 解析 + 存储（同步、纯数据，不碰 DOM） ─────────────────────── */
+        function mfStoreRequest(bodyStr) {
+            if (bodyStr.length > 4 * 1024 * 1024) return;   /* 超大请求不记 */
+            var data;
+            try { data = JSON.parse(bodyStr); } catch (e) { return; }
+            if (!data) return;
+
+            var msgs = data.messages || data.prompt;
+            if (!msgs) return;
+            if (!Array.isArray(msgs)) msgs = [{ role: 'user', content: String(msgs) }];
+
+            var groups = [];
+            for (var i = 0; i < msgs.length; i++) {
+                var m = msgs[i] || {};
+                var role = String(m.role || 'user');
+                var content = m.content;
+                if (typeof content !== 'string') {
+                    if (Array.isArray(content)) {
+                        content = content.map(function (x) {
+                            if (typeof x === 'string') return x;
+                            return (x && (x.text || x.content)) || '';
+                        }).join('\n');
+                    } else content = content == null ? '' : String(content);
+                }
+                var last = groups.length ? groups[groups.length - 1] : null;
+                if (last && last.role === role) last.text += '\n\n' + content;
+                else groups.push({ role: role, text: content });
+            }
+            if (!groups.length) return;
+
+            /* 来源判断：ST 原生的生成请求带 chat_id，插件自己发的通常不带 */
+            var source = (data.chat_id !== undefined || data.character_name !== undefined) ? '原生' : '插件';
+
+            RECORDS.unshift({
+                id: Date.now() + '-' + Math.floor(Math.random() * 1000),
+                time: new Date(),
+                source: source,
+                groups: groups
+            });
+            if (RECORDS.length > MAX) RECORDS.length = MAX;
+            mfUpdateBadge();
+        }
+
+        /* ── 入口按钮 ─────────────────────────────────────────────────── */
+        function mfEnsureBtn() {
+            var form = byId('form_character_search_form');
+            if (!form) { setTimeout(mfEnsureBtn, 600); return; }
+            if (byId(BTN_ID)) return;
+            var b = document.createElement('button');
+            b.id = BTN_ID;
+            b.className = 'mf-reqlog-btn';
+            b.title = '最近请求记录';
+            b.type = 'button';
+            b.innerHTML = svg(
+                '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H9l1.6 2H18.5A1.5 1.5 0 0 1 20 7.5v10A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/>'
+            );
+            b.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                mfTogglePanel();
+            });
+            form.appendChild(b);
+        }
+
+        function mfUpdateBadge() {
+            var b = byId(BTN_ID);
+            if (!b) return;
+            var n = RECORDS.length;
+            b.setAttribute('data-count', n ? String(n) : '');
+            b.classList.toggle('mf-has', n > 0);
+        }
+
+        /* ── 面板 ─────────────────────────────────────────────────────── */
+        function mfEnsurePanel() {
+            var p = byId(PANEL_ID);
+            if (p) return p;
+            p = document.createElement('div');
+            p.id = PANEL_ID;
+            p.className = 'mf-rl-panel';
+            p.innerHTML =
+                '<div class="mf-rl-head">' +
+                '  <span class="mf-rl-title">最近请求记录 <b class="mf-rl-count">0/10</b></span>' +
+                '  <span class="mf-rl-tools">' +
+                '    <button class="mf-rl-btn mf-rl-power" title="总开关">⏻</button>' +
+                '    <button class="mf-rl-btn mf-rl-clear" title="清空">🗑</button>' +
+                '    <button class="mf-rl-btn mf-rl-theme" title="明暗切换">☀</button>' +
+                '    <button class="mf-rl-btn mf-rl-close" title="收起">✕</button>' +
+                '  </span>' +
+                '</div>' +
+                '<div class="mf-rl-body"></div>' +
+                '<div class="mf-rl-resize" title="拖动调整大小"></div>';
+            document.body.appendChild(p);
+
+            /* 拖动移动 */
+            var head = p.querySelector('.mf-rl-head');
+            var dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+            head.addEventListener('pointerdown', function (e) {
+                if (e.target.closest('button')) return;
+                dragging = true;
+                var r = p.getBoundingClientRect();
+                ox = e.clientX - r.left; oy = e.clientY - r.top;
+                sx = e.clientX; sy = e.clientY;
+                head.setPointerCapture(e.pointerId);
+                p.classList.add('mf-rl-dragging');
+            });
+            head.addEventListener('pointermove', function (e) {
+                if (!dragging) return;
+                p.style.left = Math.max(0, Math.min(window.innerWidth - 80, e.clientX - ox)) + 'px';
+                p.style.top = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - oy)) + 'px';
+                p.style.right = 'auto';
+                p.style.bottom = 'auto';
+            });
+            head.addEventListener('pointerup', function (e) {
+                dragging = false;
+                p.classList.remove('mf-rl-dragging');
+                try { head.releasePointerCapture(e.pointerId); } catch (er) { }
+            });
+
+            /* 右下角拖动缩放 */
+            var rz = p.querySelector('.mf-rl-resize');
+            var sizing = false, rx = 0, ry = 0, rw = 0, rh = 0;
+            rz.addEventListener('pointerdown', function (e) {
+                sizing = true;
+                var r = p.getBoundingClientRect();
+                rw = r.width; rh = r.height;
+                rx = e.clientX; ry = e.clientY;
+                rz.setPointerCapture(e.pointerId);
+                e.preventDefault(); e.stopPropagation();
+            });
+            rz.addEventListener('pointermove', function (e) {
+                if (!sizing) return;
+                p.style.width = Math.max(240, Math.min(window.innerWidth - 20, rw + e.clientX - rx)) + 'px';
+                p.style.height = Math.max(160, Math.min(window.innerHeight - 20, rh + e.clientY - ry)) + 'px';
+            });
+            rz.addEventListener('pointerup', function (e) {
+                sizing = false;
+                try { rz.releasePointerCapture(e.pointerId); } catch (er) { }
+            });
+
+            /* 按钮 */
+            p.querySelector('.mf-rl-close').addEventListener('click', function () { mfTogglePanel(false); });
+            p.querySelector('.mf-rl-clear').addEventListener('click', function () {
+                RECORDS.length = 0;
+                mfRender();
+                mfUpdateBadge();
+            });
+            var pw = p.querySelector('.mf-rl-power');
+            pw.addEventListener('click', function () {
+                enabled = !enabled;
+                pw.classList.toggle('mf-off', !enabled);
+                pw.title = enabled ? '总开关（当前：开）' : '总开关（当前：关）';
+            });
+            var th = p.querySelector('.mf-rl-theme');
+            th.addEventListener('click', function () {
+                var dark = document.body.classList.toggle('mf-rl-dark');
+                th.textContent = dark ? '🌙' : '☀';
+                try { localStorage.setItem(DARK_KEY, dark ? '1' : '0'); } catch (e) { }
+            });
+            try {
+                if (localStorage.getItem(DARK_KEY) === '1') {
+                    document.body.classList.add('mf-rl-dark');
+                    th.textContent = '🌙';
+                }
+            } catch (e) { }
+
+            return p;
+        }
+
+        function mfTogglePanel(force) {
+            var p = mfEnsurePanel();
+            panelOpen = (typeof force === 'boolean') ? force : !panelOpen;
+            p.classList.toggle('mf-rl-open', panelOpen);
+            if (panelOpen) mfRender();
+        }
+
+        /* ── 渲染（只在面板打开时做；折叠的记录不渲染正文） ─────────── */
+        function mfRender() {
+            var p = byId(PANEL_ID);
+            if (!p) return;
+            var cnt = p.querySelector('.mf-rl-count');
+            if (cnt) cnt.textContent = RECORDS.length + '/' + MAX;
+            var body = p.querySelector('.mf-rl-body');
+            if (!body) return;
+
+            if (!RECORDS.length) {
+                body.innerHTML = '<div class="mf-rl-empty">还没有记录。<br>发一条消息试试 —— 每次发给 AI 的完整提示词会出现在这里。</div>';
+                return;
+            }
+
+            var html = '';
+            for (var i = 0; i < RECORDS.length; i++) {
+                var r = RECORDS[i];
+                var t = r.time;
+                var hh = ('0' + t.getHours()).slice(-2);
+                var mm = ('0' + t.getMinutes()).slice(-2);
+                var ss = ('0' + t.getSeconds()).slice(-2);
+                html += '<div class="mf-rl-item" data-id="' + r.id + '">';
+                html += '  <div class="mf-rl-item-head">';
+                html += '    <span class="mf-rl-caret">▸</span>';
+                html += '    <span class="mf-rl-time">' + hh + ':' + mm + ':' + ss + '</span>';
+                html += '    <span class="mf-rl-src mf-rl-src-' + (r.source === '原生' ? 'native' : 'plugin') + '">' + r.source + '</span>';
+                html += '    <span class="mf-rl-count2">' + r.groups.length + ' 段</span>';
+                html += '    <button class="mf-rl-copyall" title="复制整条记录">复制全部</button>';
+                html += '  </div>';
+                html += '  <div class="mf-rl-groups" hidden>';
+                for (var j = 0; j < r.groups.length; j++) {
+                    var g = r.groups[j];
+                    html += '    <div class="mf-rl-grp">';
+                    html += '      <div class="mf-rl-role mf-rl-role-' + g.role + '">' + mfRoleLabel(g.role) + '</div>';
+                    html += '      <pre class="mf-rl-text">' + mfEsc(g.text) + '</pre>';
+                    html += '      <button class="mf-rl-copy" title="复制这一段">复制</button>';
+                    html += '    </div>';
+                }
+                html += '  </div>';
+                html += '</div>';
+            }
+            body.innerHTML = html;
+
+            /* 事件（事件委托，一次绑定） */
+            body.onclick = function (e) {
+                var t = e.target;
+                var item = t.closest('.mf-rl-item');
+                if (!item) return;
+                var id = item.getAttribute('data-id');
+                var rec = null;
+                for (var k = 0; k < RECORDS.length; k++) if (RECORDS[k].id === id) rec = RECORDS[k];
+                if (!rec) return;
+
+                if (t.closest('.mf-rl-copyall')) {
+                    var all = rec.groups.map(function (g) { return '【' + mfRoleLabel(g.role) + '】\n' + g.text; }).join('\n\n');
+                    mfCopy(all, t.closest('.mf-rl-copyall'));
+                    e.stopPropagation();
+                    return;
+                }
+                var cp = t.closest('.mf-rl-copy');
+                if (cp) {
+                    var grp = cp.closest('.mf-rl-grp');
+                    var idx = Array.prototype.indexOf.call(grp.parentNode.children, grp);
+                    mfCopy(rec.groups[idx] ? rec.groups[idx].text : '', cp);
+                    e.stopPropagation();
+                    return;
+                }
+                /* 点标题 → 展开/收起 */
+                var head = t.closest('.mf-rl-item-head');
+                if (head) {
+                    var g2 = item.querySelector('.mf-rl-groups');
+                    var open = g2.hasAttribute('hidden');
+                    if (open) g2.removeAttribute('hidden'); else g2.setAttribute('hidden', '');
+                    item.classList.toggle('mf-open', open);
+                    var caret = item.querySelector('.mf-rl-caret');
+                    if (caret) caret.textContent = open ? '▾' : '▸';
+                }
+            };
+        }
+
+        function mfRoleLabel(role) {
+            var r = String(role).toLowerCase();
+            if (r === 'system') return 'System';
+            if (r === 'user') return 'User';
+            if (r === 'assistant') return 'Assistant';
+            return role;
+        }
+
+        function mfEsc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function mfCopy(text, btn) {
+            var done = function () {
+                if (!btn) return;
+                var old = btn.textContent;
+                btn.textContent = '已复制';
+                setTimeout(function () { btn.textContent = old; }, 1200);
+            };
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done, function () { mfCopyFallback(text, done); });
+                } else mfCopyFallback(text, done);
+            } catch (e) { mfCopyFallback(text, done); }
+        }
+
+        function mfCopyFallback(text, done) {
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                done();
+            } catch (e) { }
+        }
+
+        mfEnsureBtn();
+        /* 面板默认收起；有新记录时给按钮加个提示点 */
+        mfUpdateBadge();
+
+        /* 对外接口（调试 / 以后手机端做小工具都用得上） */
+        APP.requestLog = {
+            count: function () { return RECORDS.length; },
+            records: function () { return RECORDS.slice(); },
+            toggle: mfTogglePanel,
+            clear: function () { RECORDS.length = 0; mfRender(); mfUpdateBadge(); }
+        };
+    }
+
     function initPanelFolds() {
         if (document.body.classList.contains('mf-fold-js')) {
             mfFoldWorldInfo();
@@ -8329,11 +8876,13 @@
 
         /* 酒馆会在切账号/重连后重建一部分面板节点，按钮跟着节点一起没了。
            2s 一次的巡检只在"没有按钮"时才动手，平时是空转。
-           ★ v2.6.0：巡检里不再调 mfFoldPreset —— 预设折叠整个删了（见上面的说明）。 */
+           ★ v2.6.0：巡检里不再调 mfFoldPreset —— 预设折叠整个删了（见上面的说明）。
+           ★ v2.8.0 性能：2000ms → 5000ms + 后台标签页跳过。 */
         if (!MF_FOLD_TIMER) {
             MF_FOLD_TIMER = setInterval(function () {
+                if (document.hidden) return;
                 mfFoldWorldInfo();
-            }, 2000);
+            }, 5000);
         }
     }
 
@@ -8500,53 +9049,127 @@
         mo.observe(chat, { childList: true, subtree: true });
 
         place();
-        /* 兜底巡检：面板重开 / 节点整体重建时 observer 可能盯到死节点 */
-        setInterval(function () { place(); }, 1200);
+        /* 兜底巡检：面板重开 / 节点整体重建时 observer 可能盯到死节点
+           ★ v2.8.0 性能：1200ms → 3000ms + 后台标签页跳过。
+             酒馆每次重绘消息都会换掉 .mes 元素 —— 这个巡检是兜底，
+             3 秒足够（按钮晚 3 秒出现不影响使用）。 */
+        setInterval(function () {
+            if (document.hidden) return;
+            place();
+        }, 3000);
     }
 
 
     function boot() {
+        /* ★ v2.8.0 感知性能：启动时先亮出「能马上用」的部分，面板类往后排。
+           主人的原话（2026-11-22）：
+             「刚进入界面的话，你可以先让消息显示出来，这种是这种
+               就是把实际上的卡转换成眼光上的这种快」
+           实测背景：扩链 index.js 要到 ~10 秒才执行完（FCP 才 400ms），
+           期间主人看到的是一堆空面板 —— 视觉上就是"卡住了"。
+           做法：
+             ① 分两批初始化。第一批 = 输入框 / 聊天区 / 头像 / 请求记录
+                （这些主人是马上要用的）；第二批 = 预设/顶栏/API/角色墙等
+                面板类，用 requestIdleCallback 让开主线程。
+             ② body 加 .mf-booting 标记，首屏期间非聊天区半透明
+                （"还在准备"的视觉暗示，而不是空白）。
+             ★ 兜底：无论第一批有没有抛异常，mf-booting 都必须在
+               1.5 秒内被摘掉（不然界面一直半透明）。 */
+        document.body.classList.add('mf-booting');
+
+        /* ── 第一批：马上要用的 ── */
         APP.modules.styleGuard = true;
         initStyleGuard();
 
         APP.modules.qrHandle = true;
         initQuickReplyHandle();
 
-        APP.modules.presetPanel = true;
-        initPresetPanel();
+        APP.modules.msgRegen = true;
+        initMsgRegen();
 
-        APP.modules.topbar = true;
-        initTopbar();
+        /* ★ v2.8.0：最近请求记录。
+           主人要求把这个功能收进扩链 —— 扩链电脑/手机同一份，
+           手机端就能把原来的 RecentRequestLog 扩展卸掉。
+           实现上刻意**不**像原扩展那样对每个 fetch 都 clone 响应体，
+           那是原扩展造成 6.5 秒启动长任务的根源（详见模块 13 的说明）。 */
+        APP.modules.requestLog = true;
+        initRequestLog();
 
-        APP.modules.apiPanel = true;
-        initApiPanel();
-
-        APP.modules.chatPhoto = true;
-        initChatPhoto();
-
-        APP.modules.charWall = true;
-        initCharWall();
+        /* ★ v2.8.0：拦掉输入框的实时 token 计数请求。
+           实测这是打字卡顿的真正主因（72.4ms → 57.6ms）。
+           想留着那个显示：localStorage 设 mf_token_counter='1'。 */
+        APP.modules.tokenCounter = true;
+        initTokenCounterGuard();
 
         /* ★ v2.7.0：全局默认头像替换器。
            把酒馆自带的默认图（ai4.png / user-default.png / five.png）
            换成主人的两张图，每个位置各自随机。
            必须在 charWall 之后启动 —— 角色墙渲染时会先塞 ai4.png，
-           替换器要能盯住那一下。 */
+           替换器要能盯住那一下。
+           （它依赖角色墙，但本体只观察 #chat / 角色墙 / 编辑器预览三个
+             容器，不依赖 charWall 先跑，所以放第一批没问题。） */
         APP.modules.defaultAvatar = true;
         initDefaultAvatarReplace();
 
-        APP.modules.charDetail = true;
-        initCharDetail();
+        /* ── 摘掉 booting 标记（第一批跑完） ── */
+        function clearBooting() {
+            try { document.body.classList.remove('mf-booting'); } catch (e) { }
+        }
+        try { clearBooting(); } catch (e) { }
+        /* 兜底：1.5 秒后无论如何都摘掉 */
+        setTimeout(clearBooting, 1500);
 
-        APP.modules.msgRegen = true;
-        initMsgRegen();
+        /* ── 第二批：面板类，让开主线程 ── */
+        var idle = window.requestIdleCallback
+            ? function (fn) { window.requestIdleCallback(fn, { timeout: 800 }); }
+            : function (fn) { setTimeout(fn, 60); };
 
-        APP.modules.panelFolds = true;
-        initPanelFolds();
+        idle(function () {
+            try {
+                APP.modules.presetPanel = true;
+                initPresetPanel();
+            } catch (e) { console.warn(LOG, '预设面板挂载失败', e); }
 
-        /* 旧的跨书搜索栏被全功能面板取代；函数保留在上面，回滚只需把这两行换回去 */
-        APP.modules.worldPanel = true;
-        initWorldPanel();
+            try {
+                APP.modules.topbar = true;
+                initTopbar();
+            } catch (e) { console.warn(LOG, '顶栏挂载失败', e); }
+
+            try {
+                APP.modules.apiPanel = true;
+                initApiPanel();
+            } catch (e) { console.warn(LOG, 'API 面板挂载失败', e); }
+        });
+
+        idle(function () {
+            try {
+                APP.modules.chatPhoto = true;
+                initChatPhoto();
+            } catch (e) { console.warn(LOG, '照片模块挂载失败', e); }
+
+            try {
+                APP.modules.charWall = true;
+                initCharWall();
+            } catch (e) { console.warn(LOG, '角色墙挂载失败', e); }
+
+            try {
+                APP.modules.charDetail = true;
+                initCharDetail();
+            } catch (e) { console.warn(LOG, '角色详情挂载失败', e); }
+        });
+
+        idle(function () {
+            try {
+                APP.modules.panelFolds = true;
+                initPanelFolds();
+            } catch (e) { console.warn(LOG, '面板折叠挂载失败', e); }
+
+            /* 旧的跨书搜索栏被全功能面板取代；函数保留在上面，回滚只需把这两行换回去 */
+            try {
+                APP.modules.worldPanel = true;
+                initWorldPanel();
+            } catch (e) { console.warn(LOG, '世界书面板挂载失败', e); }
+        });
 
         console.log(LOG, '扩展已启动，模块：', Object.keys(APP.modules).join(', '));
     }

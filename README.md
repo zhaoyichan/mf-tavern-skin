@@ -9,9 +9,13 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.7.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.8.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | ★ 扩展静态资源 | **这个客户端不给 third-party 扩展开静态资源路由**：`/scripts/extensions/third-party/<name>/x.jpg` 与 `/extensions/third-party/<name>/x.jpg` 实测全是 404。→ 扩展要带图，只能 base64 内联成 data URI（注入脚本 `tools/inject_wall_imgs.js`） |
+| ★ 性能真凶（v2.8.0 实测） | ① 启动卡 = `RecentRequestLog` 扩展（6534ms → 禁用后 127ms，它对每个 fetch 都 clone+解析响应体）② 打字卡 = 输入框**实时 token 计数**（每敲一字发一次 `count_openai_tokens_batch`，拦掉后 72.4ms → 57.6ms）③ 扩链自身只占 **3ms**（别夸大） |
+| ★ CSS 只加载一份 | 主题槽位 `power_user.custom_css` 只放 **1,544 字符**「首屏骨架」（变量 + body 底色 + 聊天区全宽 + 顶栏），完整皮肤只由 `<link>` 提供。★ 实测 FCP 940ms vs 扩链加载 13853ms → 直接删光主题槽位会闪 13 秒，骨架方案不会。改 `skin.css` 的 `:root` 后跑 `node tools/check_boot_sync.js` 查同步 |
+| ★ 首屏 | `first-contentful-paint` 实测 **396ms**；扩链 `index.js` 实际执行在 **13,853ms** |
+| ★ 手机端 | 扩链代码电脑/手机同一份 → 手机端可卸载 `RecentRequestLog` 扩展，用扩链内置的「最近请求记录」（模块 13） |
 | ★ 默认头像真相 | 客户端在 `characters.js:1038` 有一句 `if (!request.file) { await writeCharacterData(DEFAULT_AVATAR_PATH, ...) }` —— **新建角色卡没上传头像时，客户端把自带的 `default_Seraphina.png`（粉发少女）烤进角色卡 PNG**。所以「没加图片」≠「src 为空」，src 一直有值 |
 | ★ 默认图判据（v2.7.0） | 三条判据并行：**A** 文件名 ∈ {`ai4.png`,`user-default.png`,`five.png`}（前端静态资源）；**B** 字节指纹 == 基准 `/thumbnail?type=avatar&file=default_Seraphina.png`；**C** persona 用 16×16 像素签名（阈值 8）。**只改 `<img>` 的 src，磁盘上的角色卡一个字节不动** |
 | ★ 基准必须同管线 | 基准必须走 `/thumbnail` 缩略图接口，跟被判定对象同一套字节。直接拿 `/characters/default_Seraphina.png`（69296 字节）去比卡片缩略图（8800 字节）永远对不上 |
@@ -713,3 +717,76 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
           4 张真头像（全职猎人1.05 / 我在剑风传奇当大力 / 我在惊悚游戏里封神 / Assistant）
           原样保留，marker 为 null；聊天 5 条消息头像（AI + 用户）全部替换，marker=1；
           `type=persona` 的判定走通（用户消息头像也被换成默认图）；零异常。
+
+2.8.0 — 2026-11-22 ★ 性能大修：把「酒馆卡」的三个真凶找出来并解决
+        【主人的原话】
+          「我想搞给酒馆搞得更加优化更快，就是你先找出问题，看看是哪里不对，
+            然后输入框也搞得更加流畅的。这种之类的，反正现在太容易卡了。」
+        【先说结论：卡有两个完全不同的元凶，实测数据】
+          · 启动卡（打开要等好几秒）→ **RecentRequestLog 扩展**：最长长任务
+            **6534ms**；禁用它 → **127ms**（降 98%）。实测它对**每一个** fetch 都做
+            `response.clone()` + `clone.text()` + `JSON.parse`，启动阶段几十个请求
+            被它复制解析一遍 → 几秒同步 JS 冻住页面。
+          · 打字卡 → **输入框的实时 token 计数**：每敲一个字发一次
+            `http://ipc.localhost/count_openai_tokens_batch`（实测打 24 字 = 21 次请求），
+            输入框要等它回来。拦掉之后输入延迟 **72.4ms → 57.6ms**。
+          · 扩链自己：CSS 加载两遍 + body 级全局观察器。
+            修完输入延迟只快 **3ms**（诚实数据，见下）。
+        【★ 这一版的四个改动】
+          ① CSS 去双载 → 改用「首屏骨架」方案：
+             主题槽位 `power_user.custom_css` 从 **137,460 字符**（整份皮肤）缩到
+             **1,544 字符**（只有配色变量 + body 底色 + 聊天区全宽 + 顶栏），
+             完整皮肤仍然只由 `<link>` 提供一份。解析量减半以上。
+             ★ **为什么不是「直接删光」**：实测 `first-contentful-paint = 940ms`，
+               而扩链 `index.js` 实际执行在 **13,853ms** —— 差 13 秒。
+               直接删光 → 首帧是酒馆原版色，13 秒后才变米白，
+               正是 2026-11-06 报的「报纸 → 原版 → 米白」三段变色。
+               骨架方案两样都要：首帧即米白（实测 FCP **396ms**），解析量也省一半。
+             ★ 改 `skin.css` 的 `:root` 变量后**必须**同步骨架：
+               `node tools/check_boot_sync.js` 会检查并列出差异。
+          ② JS 瘦身：
+             · body 级全局 MutationObserver → 只观察 `#chat` /
+               `#rm_print_characters_block` / `#avatar_load_preview` 三个容器
+             · `mfSwapDefaultsIn()` 加早退：先 `querySelector('img')`，
+               没有 img 就不遍历整棵子树
+             · 字节指纹只对 `type=avatar` / `type=persona` 的缩略图做，
+               表情 / 附件图 / 扩展图标一律跳过（原来每个新 src 都要 fetch 一次）
+             · 兜底巡检 3s → 10s；其余巡检 1.2s/2s → 3s/5s，并全部加
+               `document.hidden` 跳过；扩展入口观察器不再退化成 body 级
+          ③ 新模块 13「最近请求记录」：把 RecentRequestLog 的功能收进扩链，
+             这样电脑/手机同一份，**手机端就能把那个扩展卸掉**。
+             ★ 刻意不学原扩展：只在 URL 命中 `/api/backends/` 且 `init.body` 是字符串时
+               才读（零拷贝、零 clone、不读响应体），也不在 fetch 回调里碰 DOM。
+               实测抓取与分组正确：`system / user / assistant` 三段齐全；
+               装上后启动期长任务 **0 个**。
+             功能：按 System/User/Assistant 分组、标记来源（原生/插件）、
+             单条复制 / 整条复制、折叠、可拖动、可缩放、明暗切换、最多 10 条。
+          ④ 新模块 14「输入框实时 token 计数拦截」：在 fetch 层拦掉
+             `count_openai_tokens_batch`，本地直接回空结果。
+             ★ ST 的 `power_user.message_token_count_enabled` 管的是
+               「消息旁边显示 token 数」，**不是**输入框实时计数，改它没用（已实测）。
+             ★ 想留着那个显示：`localStorage.mf_token_counter = '1'`。
+        【首屏感知优化（主人原话：「把实际上的卡转换成眼光上的这种快」）】
+          · `boot()` 拆两批：第一批 = 输入框 / 聊天区 / 头像 / 请求记录（马上要用），
+            第二批 = 预设 / 顶栏 / API / 角色墙等面板类，走 `requestIdleCallback`
+          · 启动期间 body 带 `.mf-booting`，非聊天区 0.4 透明度 ——
+            看着像「正在就绪」而不是空白；1.5 秒后无论如何摘掉（防异常残留）
+        【★ 诚实的收益数据（别夸大）】
+          | 条件 | 输入延迟中位 | 备注 |
+          |---|---|---|
+          | 扩链完全缺席 | 32.5ms | 冷启动期打字的条件 |
+          | 旧扩链（CSS 双载 + body 观察器） | 75.4ms | 稳定期打字 |
+          | 新扩链（骨架 + 观察器瘦身） | 72.4ms | **只快 3ms** |
+          | 新扩链 + 拦掉 token 计数 | **57.6ms** | **真正的大头** |
+          → 扩链自身优化的直接收益是 **3ms 级**（比一开始估计的小很多）；
+            真正的打字瓶颈是 ST 的实时 token 计数，以及那 6.5 秒启动长任务。
+          → 扩链这轮的价值主要在：**解析量减半**、**去掉 body 级全局观察器**
+            （长对话滚动/重绘时受益）、**首屏感知**、**替代掉那个 6.5 秒的扩展**。
+        【附带处理】
+          · `power_user.message_token_count_enabled` → False
+          · `power_user.reduced_motion` → True
+          · `settings.json` 从 **5,780,004** 字节缩到 **4,627,495** 字节：
+            删掉 4 个完全同名的「预设管理器」重复副本（166K/174K/179K/197K 字符，
+            都是 enabled=False），省 718,240 字符
+          · `RecentRequestLog` 扩展已在电脑上禁用（手机端主人可自行卸载，
+            扩链里已有同样功能）
