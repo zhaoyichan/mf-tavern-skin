@@ -3938,6 +3938,8 @@
             left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
             star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.7l6.1-.9z"/></svg>',
             plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+            upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M8 7l4-4 4 4"/><path d="M4 15v3a3 3 0 003 3h10a3 3 0 003-3v-3"/></svg>',
+            refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 11-2.6-6.1"/><path d="M20.5 4v5h-5"/></svg>',
             search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
             close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
             gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>',
@@ -4710,6 +4712,10 @@
               + '</span>';
             if (view === 'list') {
                 h += '<span class="chip" data-act="newbook">' + SV.plus + '新建</span>';
+                /* ★ v2.5.0：导入入口补在一级页（跟「新建」并排）。
+                   原生的导入按钮 #world_import_button 被我们藏掉的 #wi-holder
+                   一起盖住了，用户在面板里根本摸不到导入。 */
+                h += '<span class="chip" data-act="importwb">' + SV.upload + '导入</span>';
             } else {
                 h += '<select class="sel" id="mfWbSort">'
                   + '<option value="custom"' + (sortBy === 'custom' ? ' selected' : '') + '>自定义序</option>'
@@ -5423,6 +5429,72 @@
             return true;
         }
 
+        /* ── 导入世界书（v2.5.0 新增） ─────────────────────────────────────
+           【为什么之前没有】
+             我们的全功能面板把原生 #wi-holder 整个 display:none 了
+             （skin.css：#WorldInfo.mf-wb-on 时隐藏），而原生的
+             「导入世界书」按钮 #world_import_button 就住在 #wi-holder 里面，
+             于是面板里只剩「新建」，导入这条路整个消失。
+             二级页「更多」菜单里也只有 导出 / 删除 / 临时切回原生。
+
+           【做法：复用原生按钮，不自己解析文件】
+             原生按钮背后是酒馆的 importWorldInfo()，它认得
+             .json / .lorebook / .png（PNG 角色卡里内嵌的世界书）三种格式，
+             还会弹酒馆自己的提示。自己重写解析 = 把酒馆的坑重踩一遍。
+             → JS 直接 click 那个「看不见的」原生按钮
+               （display:none 的元素也能 .click()，事件照样派发）。
+
+           【导入完要把新书刷进我们的面板】
+             原生导入是异步的：弹文件框 → 读文件 → 写盘 → 刷新 world_names。
+             我们这边轮询书名清单：一旦变了就 loadAll(true) 重读并重绘。
+             ★ 必须把所有数据源合并成一个签名再比：
+               ctx.getWorldInfoNames() 和原生下拉 #world_editor_select
+               这两份有时不同步，只盯其中一份会误判 / 漏判。
+             最多等 3 分钟，超时自己收工，不留定时器。 */
+        function importBook() {
+            var btn = document.getElementById('world_import_button');
+            if (!btn) {
+                setStatus('err', '没找到原生导入按钮（酒馆版本变了？）');
+                return;
+            }
+            /* 所有数据源合并成一个签名：ctx 那份 + 原生下拉那份 */
+            function allSig() {
+                var set = {};
+                try { nativeNames().forEach(function (n) { set[n] = 1; }); } catch (e) { }
+                var sel = document.getElementById('world_editor_select');
+                if (sel) {
+                    [].slice.call(sel.options).forEach(function (o) {
+                        var t = (o.textContent || '').trim();
+                        if (t && o.value !== '') set[t] = 1;
+                    });
+                }
+                return Object.keys(set).sort().join('');
+            }
+            var before = allSig();
+            setStatus('on', '请选择要导入的世界书文件…');
+            try {
+                btn.click();
+            } catch (e) {
+                setStatus('err', '导入失败：' + (e && e.message ? e.message : e));
+                return;
+            }
+            var t0 = Date.now();
+            var iv = setInterval(function () {
+                if (allSig() !== before) {
+                    clearInterval(iv);
+                    loadAll(true).then(function () {
+                        render();
+                        setStatus('ok', '导入完成，列表已刷新');
+                    }).catch(function (e) {
+                        render();
+                        setStatus('err', '导入后刷新失败：' + (e && e.message ? e.message : e));
+                    });
+                } else if (Date.now() - t0 > 180000) {
+                    clearInterval(iv);
+                }
+            }, 1500);
+        }
+
         function createBook() {
             var name = prompt('新建世界书，输入名字：', '新世界书 ' + new Date().toLocaleDateString('zh-CN'));
             if (!name) return;
@@ -5722,6 +5794,7 @@
             if (act === 'clrq') { q = ''; render(); return; }
             if (act === 'gset') { gsetOpen = !gsetOpen; render(); return; }
             if (act === 'newbook') { createBook(); return; }
+            if (act === 'importwb') { importBook(); return; }
             if (act === 'delbook') { closeMore(); deleteBook(curName); return; }
             if (act === 'more') {
                 var mm = document.getElementById('mfWbMore');
@@ -6852,6 +6925,45 @@
 
         block.classList.add('mf-tools');
 
+        /* ── 常显的「＋ 新建角色卡」（v2.5.0 新增） ──
+           【为什么不能再只藏在 ⋯ 里】
+             原生新建按钮 #rm_button_create 一直都在，但收起态整条
+             #rm_button_bar 被 CSS 藏掉了：
+               #rm_characters_block.mf-tools:not(.mf-tools-open) #rm_button_bar
+                 { display: none !important; }
+             结果角色墙上只看到卡片，没有「新建」的入口 —— 找起来太费劲
+             （用户 2026-11-22 原话：「角色卡那个界面是有卡片，但是没有
+               新建角色卡的那种选项」）。
+           【点它走原生 #rm_button_create 的 click】
+             原生处理器是：selected_button = 'create'; select_rm_create();
+             面板本身是 display:none 也能触发 click，所以不必把它显示出来，
+             也不用自己重建新建表单（重建 = 要处理头像/预设/导入等一堆分支）。
+           【幂等】
+             面板重开时 #charListFixedTop 里的东西不一定重建，
+             所以每次都先查有没有 #mf-char-new，有就跳过。 */
+        if (!form.querySelector('#mf-char-new')) {
+            var nb = document.createElement('button');
+            nb.id = 'mf-char-new';
+            nb.type = 'button';
+            nb.className = 'mf-newchar';
+            nb.title = '新建角色卡';
+            nb.setAttribute('aria-label', '新建角色卡');
+            nb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+                + ' stroke-width="2.2" stroke-linecap="round" aria-hidden="true">'
+                + '<path d="M12 5v14M5 12h14"/></svg><span>新建</span>';
+            nb.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var native = document.getElementById('rm_button_create');
+                if (native) native.click();
+                else alert('没找到原生新建按钮');
+            });
+            /* 排在 ⋯ 前面 → 一行是 [搜索框][＋ 新建][⋯] */
+            var tgl = form.querySelector('#mf-tools-toggle');
+            if (tgl) form.insertBefore(nb, tgl);
+            else form.appendChild(nb);
+        }
+
         if (form.querySelector('#mf-tools-toggle')) return;
 
         var btn = document.createElement('button');
@@ -7684,6 +7796,173 @@
     }
 
 
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 12 · 消息末尾的 ⟳ 重新生成 + 禁掉滑动误触（v2.5.0）
+       ─────────────────────────────────────────────────────────────────────
+       【用户口径 2026-11-22】
+       「酒馆不是会有那个向右一滑，然后就会重新生成的嘛，呃我太容易误触了，
+         所以我希望你把它改成不会滑动就会生成，就是需要点最末尾有个小按钮。」
+
+       【真根因 · 为什么一碰就烧 token】
+       原生消息右边缘有个 › 箭头（.swipe_right，住在 .swipeRightBlock 里）：
+         · 点它 = 切到下一条备选回复（swipe right）
+         · 当这条已经是最后一条备选（.last_swipe）时再点 = OVERSWIPE
+           → OVERSWIPE_BEHAVIOR.REGENERATE = 重新生成
+       原生 CSS 里箭头的显隐规则（style.css:1351 / 1355）：
+         body:not(.swipeAllMessages) .mes:not(.last_mes)
+             :is(.swipe_left, .swipe_right, .swipes-counter)
+         .mes:not(.swipes_visible, .last_swipe) :is(.swipe_right)
+       → 也就是说最后一条消息上那个箭头一直都在，看着像装饰，碰不得。
+
+       【改法 · 三层】
+       ① 隐藏原生箭头（skin.css）：
+          ★ 只藏 .swipe_right，**不藏 .swipes-counter** ——
+            那个数字可以点，开的是备选选择器（swipe-picker.js），
+            换回旧备选全靠它，藏了就再也回不去旧回复。
+       ② 消息末尾加一个 ⟳ 小按钮：
+          只有「最后一条是 AI 消息」时才给 —— 原生箭头也只对最后一条生效，
+          中间消息没有「原地重生成」这回事，硬塞会造成
+          「点了却重生成最后一条」，比没有更误导。
+          点它走原生 #option_regenerate（原生入口 → Generate('regenerate')）。
+          ★ 不自己调 Generate()：自己调就得处理 is_send_press、swipe 状态、
+            分组聊天等一堆分支；点原生那个 <a> 等于用户亲手点一次。
+       ③ 掐断横向拖动：在 #chat 上用**捕获阶段**监听 pointer/touch 事件，
+          一旦发现是横向拖动（|dx|>18 且 |dx|>|dy|*1.4）就 stopPropagation，
+          酒馆任何绑在冒泡阶段的手势都收不到这次拖动。
+          ★ 只 stopPropagation，**不 preventDefault**：
+            preventDefault 会把「鼠标拖动划词选中」和「竖向滚动」一起废掉。
+          ★ 必须用捕获阶段：冒泡阶段 #chat 已经是最后一个目标，
+            酒馆绑在 .mes / document 上的监听器早就跑完了，拦不住。
+       ═════════════════════════════════════════════════════════════════════ */
+    function initMsgRegen() {
+        var chat = document.getElementById('chat');
+        if (!chat) {
+            setTimeout(function () { initMsgRegen(); }, 600);
+            return;
+        }
+
+        /* ── ③ 横向拖动拦截 ───────────────────────────────────────────── */
+        var drag = null;          /* {x, y, hit} */
+        var swallowUntil = 0;     /* 拖动后那一次 click 的截止时刻 */
+
+        function pt(e) {
+            if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            if (e.changedTouches && e.changedTouches.length) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+            return { x: e.clientX || 0, y: e.clientY || 0 };
+        }
+        /* 在输入框 / 文本域 / 代码块里拖 = 划词选字，不是滑消息，放行 */
+        function inTextZone(e) {
+            var t = e.target;
+            if (!t || !t.closest) return false;
+            return !!t.closest('input, textarea, select, [contenteditable="true"], pre, code, table');
+        }
+        function onDown(e) {
+            if (inTextZone(e)) { drag = null; return; }
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            var p = pt(e);
+            drag = { x: p.x, y: p.y, hit: false };
+        }
+        function onMove(e) {
+            if (!drag || drag.hit) return;
+            var p = pt(e);
+            var dx = p.x - drag.x, dy = p.y - drag.y;
+            if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+                drag.hit = true;
+                /* ★ 只掐断传播，不 preventDefault（保住划词选中 + 竖向滚动） */
+                try { e.stopPropagation(); } catch (err) { }
+            }
+        }
+        function onUp() {
+            if (drag && drag.hit) {
+                /* 横向拖动结束时浏览器可能补一个 click（拖到箭头上的那种）→ 吞掉 */
+                swallowUntil = Date.now() + 350;
+            }
+            drag = null;
+        }
+        function onClick(e) {
+            if (swallowUntil && Date.now() < swallowUntil) {
+                swallowUntil = 0;
+                try { e.preventDefault(); e.stopPropagation(); } catch (err) { }
+            }
+        }
+
+        var hasPointer = !!(window.PointerEvent);
+        var downEv = hasPointer ? ['pointerdown'] : ['mousedown', 'touchstart'];
+        var moveEv = hasPointer ? ['pointermove'] : ['mousemove', 'touchmove'];
+        var upEv = hasPointer ? ['pointerup', 'pointercancel'] : ['mouseup', 'touchend', 'touchcancel'];
+        downEv.forEach(function (t) { chat.addEventListener(t, onDown, true); });
+        moveEv.forEach(function (t) { chat.addEventListener(t, onMove, true); });
+        upEv.forEach(function (t) { chat.addEventListener(t, onUp, true); });
+        chat.addEventListener('click', onClick, true);
+
+        /* ── ② 消息末尾的 ⟳ 重新生成 ─────────────────────────────────── */
+        var RID = 'mf-regen';
+
+        /* ★ 酒馆标记「用户消息」用的是**属性**不是 class：
+             messageElement.attr({ 'is_user': mes.is_user, ... })
+             → DOM 上是 is_user="true" / is_user="false"
+           用 classList.contains('is_user') 判会永远判成 false，
+           结果按钮会挂到用户自己那条消息上。 */
+        function isUserMsg(el) {
+            if (!el) return false;
+            return String(el.getAttribute('is_user')).toLowerCase() === 'true';
+        }
+
+        function place() {
+            var msgs = chat.querySelectorAll('.mes');
+            if (!msgs.length) return;
+            var last = msgs[msgs.length - 1];
+            var target = isUserMsg(last) ? null : last;
+
+            /* 清掉别的消息上的旧按钮（重生成后最后一条会换人） */
+            var olds = chat.querySelectorAll('#' + RID);
+            for (var i = 0; i < olds.length; i++) {
+                if (!target || olds[i].parentNode !== target) olds[i].parentNode.removeChild(olds[i]);
+            }
+            if (!target) return;
+            if (target.querySelector('#' + RID)) return;
+
+            var txt = target.querySelector('.mes_text');
+            if (!txt || !txt.parentNode) return;
+
+            var b = document.createElement('button');
+            b.id = RID;
+            b.type = 'button';
+            b.className = 'mf-regen';
+            b.title = '重新生成这条回复';
+            b.setAttribute('aria-label', '重新生成这条回复');
+            b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+                + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                + '<path d="M20.5 12a8.5 8.5 0 11-2.6-6.1"/><path d="M20.5 4v5h-5"/></svg>';
+            b.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var opt = document.getElementById('option_regenerate');
+                if (opt) opt.click();
+                else alert('没找到原生重新生成入口');
+            });
+            /* 放在 .mes_text 后面 = 这条消息的最末尾 */
+            txt.parentNode.insertBefore(b, txt.nextSibling);
+        }
+
+        /* 酒馆每次重绘消息都会换掉 .mes 元素 → 按钮会掉。
+           MutationObserver 重新贴（幂等：已有就跳过）。
+           用 subtree 是因为酒馆有时整块替换 .mes 的内部结构，
+           只盯 #chat 的直接子节点会漏。 */
+        var pending = false;
+        var mo = new MutationObserver(function () {
+            if (pending) return;
+            pending = true;
+            setTimeout(function () { pending = false; place(); }, 60);
+        });
+        mo.observe(chat, { childList: true, subtree: true });
+
+        place();
+        /* 兜底巡检：面板重开 / 节点整体重建时 observer 可能盯到死节点 */
+        setInterval(function () { place(); }, 1200);
+    }
+
+
     function boot() {
         APP.modules.styleGuard = true;
         initStyleGuard();
@@ -7708,6 +7987,9 @@
 
         APP.modules.charDetail = true;
         initCharDetail();
+
+        APP.modules.msgRegen = true;
+        initMsgRegen();
 
         APP.modules.panelFolds = true;
         initPanelFolds();

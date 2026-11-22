@@ -9,8 +9,14 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.4.1；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.5.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
+| 右滑重生成 | 原生 `.swipe_right` 箭头住在 `.swipeRightBlock` 里。点它 = 切下一条备选；**当这条已经是最后一条备选（`.last_swipe`）时再点 = OVERSWIPE → `OVERSWIPE_BEHAVIOR.REGENERATE` = 重新生成**（原生 `script.js` 约 10410 行） |
+| 原生箭头的显隐 | 酒馆原生 `style.css` 两条规则决定它什么时候出现：`body:not(.swipeAllMessages) .mes:not(.last_mes) :is(.swipe_left,.swipe_right,.swipes-counter)` 和 `.mes:not(.swipes_visible,.last_swipe) :is(.swipe_right)` —— 所以最后一条消息上那个箭头**一直都在**，误触一次烧一次 token |
+| ★ 隐藏 ≠ 删除 | 我们的面板用 `display:none` 藏原生节点（`#wi-holder`、`#rm_button_bar`），**节点还在 DOM 里 → JS `.click()` 照样能触发**（`display:none` 的元素也能派发 click）。这是「导入世界书」「新建角色卡」两个入口能低成本补回来的前提 |
+| 用户消息的标记 | 酒馆用**属性** `is_user="true"/"false"`（`messageElement.attr({is_user: mes.is_user})`），**不是 class**。用 `classList.contains('is_user')` 判会永远判成 false，按钮会挂到用户自己那条消息上 |
+| 备选计数器不能藏 | `.swipes-counter`（那个「1/3」的数字）可以点开**备选选择器**（`swipe-picker.js`，`SWIPE_SOURCE.SWIPE_PICKER`），是换回旧回复的唯一入口。藏箭头可以，藏它就再也回不去旧备选了 |
+| 消息末尾按钮的落点 | 消息 DOM 是 `.mes`(flex 行) → `[.for_checkbox][.mesAvatarWrapper][.swipe_left][.mes_block][.swipeRightBlock]`，`.mes_block` 内才是 `.mes_text`。所以「消息最末尾」= 插在 `.mes_text` 之后（`.mes_block` 里），不是插在 `.mes` 里 |
 | DOM 真相 | `#top-bar` 是 `absolute` 空壳（50vw×44），与 `#top-settings-holder` 是**兄弟节点**；9 个 drawer 全在 holder 里 |
 | 九个 drawer | `ai-config-button` / `sys-settings-button` / `advanced-formatting-button` / `WI-SP-button` / `user-settings-button` / `backgrounds-button` / `extensions-settings-button` / `persona-management-button` / `rightNavHolder` |
 | 正文铺满 | `--topBarBlockSize` 被 `#sheld` 的 `top` 和 `height` **同时引用**，只在宽屏精细指针下归零 |
@@ -72,6 +78,7 @@
 | `index.js` → char-wall | **角色墙（v2.2.0）**：接管角色列表成 3 列墙 + 左上 2×2 hero，顶部四排按钮收进「⋯」。只加 class + 全 CSS，**不重建 DOM、不动原生事件** |
 | `index.js` → char-detail | **角色详情页（v2.4.1）**：点格子不再进编辑面板，而是**在右抽屉里**滑入一页；聊天列表走真实接口，点哪段进哪段 |
 | `index.js` → panel-folds | 世界书 / 预设面板顶部折叠：`#wiTopBlock`、采样滑条、预设标题行与图标簇收进标题行「⋯」，找得到节点才动手，找不到一个 class 都不加 |
+| `index.js` → msg-regen | **消息末尾 ⟳ 重新生成 + 禁滑动误触（v2.5.0）**：藏掉原生右箭头，改成消息末尾一个 22px 的 ⟳ 小按钮；横向拖动直接掐断 |
 
 后续还会往里加：侧栏/抽屉统一、弹窗与表单。
 
@@ -240,6 +247,46 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
 - `预设面板已接管（1.3.0）` → 预设面板改造生效
 - `skin.css 没找到` → 扩展没被加载，检查文件夹位置与 manifest
 - 完全没有日志 → 扩展的 `index.js` 没执行，看扩展面板是否启用
+
+## 三个补回来的入口（v2.5.0，2026-11-22）
+
+这一版只做三件事：**把被我们盖住的原生入口补回来**，外加**堵掉误触重新生成**。
+
+### ① 世界书「导入」
+
+| 项 | 说明 |
+|---|---|
+| 位置 | 世界书面板**一级页**（书列表页），「新建」chip 右边紧挨着 |
+| 支持格式 | 跟原生一样：`.json` / `.lorebook` / `.png`（PNG 角色卡里内嵌的世界书） |
+| 实现 | JS 直接 click 那个「看不见的」原生 `#world_import_button` —— 它被我们用 `display:none` 藏起来的 `#wi-holder` 一起盖住了，但节点还在，click 照样派发，酒馆自己走原生导入通道（认得全部格式、还弹它自己的提示） |
+| 导入完 | 自动把新书刷进面板（轮询书名清单 → `loadAll(true)` → 重绘），不用手动重开面板 |
+
+> 为什么不自己解析文件：自己写解析器 = 把酒馆在 PNG/ lorebook 上的坑重踩一遍。
+> 为什么不把原生那排按钮整个放出来：那排是酒馆的原始外观，跟这套面板不是一个东西。
+
+### ② 角色墙「＋ 新建角色卡」
+
+| 项 | 说明 |
+|---|---|
+| 位置 | 角色墙顶部那一行：**`[搜索框][＋ 新建][⋯]`**，新建常显，不再藏进「⋯」 |
+| 为什么原来没有 | 原生 `#rm_button_create` 一直都在，但收起态整条 `#rm_button_bar` 被 CSS 藏了（`.mf-tools:not(.mf-tools-open) #rm_button_bar { display:none !important }`）→ 墙上只看得见卡片，找不到「新建」 |
+| 实现 | 点它走原生 `#rm_button_create` 的 click（原生处理器 = `selected_button='create'; select_rm_create();`），新建表单完全由酒馆自己管，我们不重建 |
+| 展开「⋯」后 | 原生那排（新建 / 导入 / 外链导入 / 建群 / 扩展按钮 / 排序 / 搜索切换）照旧全在，没动 |
+
+### ③ 消息末尾 ⟳ 重新生成 + 禁滑动
+
+| 项 | 说明 |
+|---|---|
+| 原来为什么误触 | 原生消息右边缘那个 › 箭头：点是「切下一条备选」，**当这条已经是最后一条备选时再点 = 重新生成**。它一直显示在最后一条消息上，看着像装饰，碰不得 |
+| 现在 | 箭头藏起来（只藏 `.swipe_right`，**`.swipes-counter` 那个「1/3」的数字留着**，点它照样能开备选选择器换回旧回复）；改成**消息正文末尾一个 22px 的 ⟳ 小圆钮**，点它 = 重新生成这一条 |
+| 按钮只出现在哪 | 只有**最后一条是 AI 消息**时才有（原生箭头也只对最后一条生效）。中间消息没有「原地重生成」这回事，硬塞会造成「点了却重生成最后一条」，比没有更误导 |
+| 点它走哪 | 原生 `#option_regenerate`（原生入口 → `Generate('regenerate')`）。我们不自己调 `Generate()`：自己调要处理 `is_send_press`、swipe 状态、分组聊天等一堆分支，点原生那个 `<a>` 等于用户亲手点一次 |
+| 滑动 | 在 `#chat` 上用**捕获阶段**监听 pointer/touch 事件，横向拖动（横向位移 > 18px 且明显大于纵向）就 `stopPropagation` 掐断，酒馆收不到这次拖动 |
+| ★ 为什么只 stopPropagation | 不 `preventDefault` —— 那会把「鼠标拖动划词选中」和「竖向滚动」一起废掉 |
+| ★ 为什么必须捕获阶段 | 冒泡阶段 `#chat` 已经是最后一个目标，酒馆绑在 `.mes` / `document` 上的监听器早就跑完了，拦不住 |
+
+> 换回旧回复：点消息右下角那个「1/3」数字 → 备选选择器。
+> 想换回原生箭头：把 `skin.css` 里 `#chat .swipe_right { display:none !important }` 这行删掉即可。
 
 ## 版本
 
@@ -546,3 +593,31 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
         - 2px)/2，1920 窗口 479、1360 窗口 339，`--sheldWidth` 被拖过就会变）。
         连带删掉按视口判断的两套媒体查询、三张数据卡改 `auto-fit`（窄到 339 自动两列）、
         封面渐隐终点从卡片白改成正文底色（原来接缝处亮 15 阶，一条白线横贯）
+2.5.0 — 2026-11-22 ★ 补回三个被自己盖掉的入口 + 堵掉误触重新生成：
+        ① 世界书一级页加「导入」chip —— 原生 `#world_import_button` 被我们用
+           `display:none` 藏起来的 `#wi-holder` 一起盖住了，用户根本摸不到导入。
+           做法是 JS 直接 click 那个看不见的原生按钮（display:none 也能派发 click），
+           让酒馆自己走原生导入通道（.json / .lorebook / .png 都认），导入完轮询书名
+           清单自动刷新面板。**不自己解析文件** —— 自己写 = 把酒馆的坑重踩一遍。
+        ② 角色墙顶部常显「＋ 新建角色卡」（`[搜索框][＋ 新建][⋯]` 一行）。
+           原生 `#rm_button_create` 一直在，但收起态整条 `#rm_button_bar` 被 CSS 藏了
+           （`.mf-tools:not(.mf-tools-open) #rm_button_bar{display:none!important}`）
+           → 墙上只看得见卡片。点它走原生 `#rm_button_create` 的 click。
+        ③ 消息末尾 22px 的 ⟳ 小按钮 + 藏掉原生右箭头：
+           原生 `.swipe_right` 箭头住在 `.swipeRightBlock` 里，点它 = 切下一条备选，
+           **已经是最后一条备选时再点 = OVERSWIPE → REGENERATE = 重新生成**
+           （原生 script.js 约 10410 行）→ 误触一次烧一次 token。
+           现在箭头藏起来（**`.swipes-counter` 那个「1/3」必须留着**，点它是备选
+           选择器，换回旧回复全靠它），改成消息正文末尾一个 ⟳ 小钮，
+           点它走原生 `#option_regenerate` → `Generate('regenerate')`。
+           按钮只给「最后一条是 AI 消息」时 —— 原生箭头也只对最后一条生效，
+           中间消息硬塞会造成「点了却重生成最后一条」。
+           横向拖动用**捕获阶段**监听 pointer/touch，横向位移 > 18px 且明显大于纵向
+           就 stopPropagation 掐断酒馆手势；★ 只 stopPropagation 不 preventDefault
+           （否则划词选中和竖向滚动一起废掉）。
+        ★ 两个差点踩的坑：① 酒馆标记用户消息用的是**属性** `is_user="true"`，不是 class，
+           用 classList 判会永远判错；② 消息 DOM 里 `.mes_text` 的父级是 `.mes_block`
+           不是 `.mes`，「消息末尾」= 插在 `.mes_text` 之后。
+        ★ 实机验证（TauriTavern + 探针法，CDP 端口对这个客户端无效）：
+        5 条消息 / ⟳ 按钮 1 个且在最后一条 AI 消息上 / `.swipe_right` display:none /
+        「导入」chip 在 / 「＋ 新建」在 / 8s·20s·45s 三次快照零异常。
