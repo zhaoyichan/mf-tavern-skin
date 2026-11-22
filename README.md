@@ -9,9 +9,15 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.6.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.7.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | ★ 扩展静态资源 | **这个客户端不给 third-party 扩展开静态资源路由**：`/scripts/extensions/third-party/<name>/x.jpg` 与 `/extensions/third-party/<name>/x.jpg` 实测全是 404。→ 扩展要带图，只能 base64 内联成 data URI（注入脚本 `tools/inject_wall_imgs.js`） |
+| ★ 默认头像真相 | 客户端在 `characters.js:1038` 有一句 `if (!request.file) { await writeCharacterData(DEFAULT_AVATAR_PATH, ...) }` —— **新建角色卡没上传头像时，客户端把自带的 `default_Seraphina.png`（粉发少女）烤进角色卡 PNG**。所以「没加图片」≠「src 为空」，src 一直有值 |
+| ★ 默认图判据（v2.7.0） | 三条判据并行：**A** 文件名 ∈ {`ai4.png`,`user-default.png`,`five.png`}（前端静态资源）；**B** 字节指纹 == 基准 `/thumbnail?type=avatar&file=default_Seraphina.png`；**C** persona 用 16×16 像素签名（阈值 8）。**只改 `<img>` 的 src，磁盘上的角色卡一个字节不动** |
+| ★ 基准必须同管线 | 基准必须走 `/thumbnail` 缩略图接口，跟被判定对象同一套字节。直接拿 `/characters/default_Seraphina.png`（69296 字节）去比卡片缩略图（8800 字节）永远对不上 |
+| ★ 字节指纹算法 | `fetch` → 总字节长度 + **步长 1013** 的抽样字节和。实测 12 张粉发卡：长度全 8800、采样和全 1415；4 张真头像分别 10934/7017/4803/4976 —— 完全分得开。1013 是质数且与 PNG 扫描线长度不同步 |
+| ★ persona 要用像素判 | 用户槽位渲染的是 `/thumbnail?type=persona&file=1788261080182-.png` —— 文件名是上传时间戳、字节也和 `user-default.png` 缩略图差几字节（2756 vs 2762），**文件名判据和字节指纹都判不出来**。只能比像素：16×16 平均绝对差 0.09（同图）vs 79.1（粉发少女） |
+| ★ 哪些默认图**不**换 | `default_Assistant.png` 是客户端自带助手卡的 **TauriTavern Logo 图**（不是粉发少女）→ 按主人的内容判据**不纳入**基准；`default_Seraphina.png` 是粉发少女 → **要换**（它自己也显示在角色墙上） |
 | 照片的挂载点 | 扩链「照片」功能 v2.6.0 起：一张**全局**图（IndexedDB key = `__global__`），挂在**每个角色的最后一条** AI 消息上方（`.mes_block` 里，`.ch_name` 之后、`.mes_text` 之前） |
 | 右滑重生成 | 原生 `.swipe_right` 箭头住在 `.swipeRightBlock` 里。点它 = 切下一条备选；**当这条已经是最后一条备选（`.last_swipe`）时再点 = OVERSWIPE → `OVERSWIPE_BEHAVIOR.REGENERATE` = 重新生成**（原生 `script.js` 约 10410 行） |
 | 原生箭头的显隐 | 酒馆原生 `style.css` 两条规则决定它什么时候出现：`body:not(.swipeAllMessages) .mes:not(.last_mes) :is(.swipe_left,.swipe_right,.swipes-counter)` 和 `.mes:not(.swipes_visible,.last_swipe) :is(.swipe_right)` —— 所以最后一条消息上那个箭头**一直都在**，误触一次烧一次 token |
@@ -663,5 +669,47 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
           「把抽屉标题改成世界书」从来没生效过（探针 `oldSelectorFound:false` 实锤）。
           已改成 `h3 > span[data-i18n="Worlds/Lorebooks"]`（退化为 `h3 > span`），
           并用自有 class `.mf-wi-hide` 让 CSS 藏。
-        ★ 限制：默认图只在「没有头像」或「头像加载失败」时出现。
-          当前角色墙那 15 张卡每张都有头像，所以这一轮看不出效果。
+        ★ v2.6.0 的已知缺陷（v2.7.0 已修）：默认图只在「src 为空」或「头像加载失败」时出现。
+          而客户端给没上传头像的卡**烤进了默认图**，src 一直有值 → 判据永远判不中。
+          → v2.7.0 改成按**图像内容**判定，详见下面 v2.7.0 条目。
+
+2.7.0 — 2026-11-22 默认头像真判据（用户原话：「默认图是我新建了角色卡，我没有往里面
+        加图片，但是酒馆那个里面有图片，它会把那个图片改成那个女子的，但是我不要这样子，
+        我就是如果他没加图片的话，就是我的那些默认图，而不是说加载失败的时候才出现。
+        就把酒馆那个默认的图片改成现在我给你的这两个。」）：
+        ★ **根因（探针实证）**：客户端 `characters.js:1038` 有
+          `if (!request.file) { await writeCharacterData(DEFAULT_AVATAR_PATH, ...) }`
+          —— 新建卡没上传头像时，客户端把自带的 `default_Seraphina.png`（粉发少女，
+          240×360）**烤进角色卡 PNG**。所以「没加图片」的卡照样有头像，只是那是默认图。
+          证据：主人 19:33 新建的「快乐；‘」卡内嵌 ccv3 元数据 `{"avatar":"none",...}`，
+          但其内嵌图与客户端 `default_Seraphina.png` 的 md5 前 12 位相同（`3e1646772025`）。
+        ★ **三条错误判据被逐个证伪**（都写在代码注释里，别再走回头路）：
+          ① 文件名 `ai4.png`：探针证明**所有卡 src 都是 `/thumbnail?type=avatar&file=xxx.png`，
+             一张 ai4.png 都没有**；且 `img/ai4.png` 实际是紫色问号剪影（512×768），
+             跟烤进卡的粉发少女**不是同一张图**。
+          ② metadata 的 `avatar === 'none'`：服务端 `characters.js:413` 用文件名
+             `jsonObject.avatar = item;` **覆盖了 'none'**，前端拿不到。
+          ③ canvas 像素比对：跨域污染 canvas，`getImageData` 抛错。
+        ★ **最终判据（字节指纹，探针 g 实测）**：
+          `fetch(url)` → 总字节长度 + **步长 1013** 的抽样字节和。
+          实测 12 张粉发卡：长度全 8800、采样和全 1415；4 张真头像分别
+          10934 / 7017 / 4803 / 4976 —— 完全分得开。
+          ★ **基准必须跟被判定对象走同一条渲染管线**：
+          直接拿 `/characters/default_Seraphina.png`（原图 69296 字节）去比卡片缩略图
+          （8800 字节）**永远对不上** → 基准改走 `/thumbnail?type=avatar&file=default_Seraphina.png`。
+        ★ **用户（persona）头像要走像素判据**：
+          用户槽位渲染的是 `/thumbnail?type=persona&file=1788261080182-.png`
+          —— 文件名是上传时间戳，字节也和 `user-default.png` 缩略图差几字节（2756 vs 2762）
+          → **文件名判据和字节指纹都判不出来**。
+          改用 16×16 像素签名：同图平均绝对差 0.09，粉发少女 79.1 → 阈值取 8 绰绰有余。
+          基准 `/thumbnail?type=persona&file=user-default.png`。
+        ★ **哪些默认图不换**：`default_Assistant.png` 是客户端自带助手卡的 **TauriTavern Logo 图**
+          （不是粉发少女）→ 按内容判据**不纳入**基准；`default_Seraphina.png` 是粉发少女 → **要换**
+          （它自己也显示在角色墙上，且基准指纹已提前缓存，换 img.src 不会造成自循环）。
+        ★ **只改显示，不动原文件**：只换 `<img>` 的 src，磁盘上的角色卡 PNG 一个字节不动。
+        ★ **每个位置各自随机**：每张卡独立随机挑一张，`data-mf-default-avatar` 标记防重复抽卡。
+        ★ v2.7.0 探针实测（i / j / k 三轮）：
+          角色墙 17 格 → 13 张粉发少女卡全部替换（IMG1 10 张 + IMG2 3 张，两个随机图都有出现）；
+          4 张真头像（全职猎人1.05 / 我在剑风传奇当大力 / 我在惊悚游戏里封神 / Assistant）
+          原样保留，marker 为 null；聊天 5 条消息头像（AI + 用户）全部替换，marker=1；
+          `type=persona` 的判定走通（用户消息头像也被换成默认图）；零异常。
