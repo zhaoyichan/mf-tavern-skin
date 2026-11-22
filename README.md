@@ -790,3 +790,17 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
             都是 enabled=False），省 718,240 字符
           · `RecentRequestLog` 扩展已在电脑上禁用（手机端主人可自行卸载，
             扩链里已有同样功能）
+          · ★ `power_user.streaming_fps` **40 → 15**：
+            ST 官方 FAQ 明确建议流式输出用 10–15 FPS
+            （「set the streaming FPS to a lower value (10-15 FPS is recommended)」），
+            40 FPS 意味着 AI 回话时每秒重渲染 40 帧
+        【ST 官方 FAQ 的性能建议（这一节已全部在本机落实）】
+          · 「Disable the Blur Effect and enable **Reduced Motion**」
+            → `blur_strength=0`（本来就是）、`reduced_motion=True`（本轮开的）
+          · 「enable **No Blur (Fast UI)** mode」→ `fast_ui_mode=True`（本来就是）
+          · 「set the **streaming FPS** to 10–15」→ 本轮 40 → 15
+          · 「make sure the browser is enabled to use **GPU acceleration**」
+            → TauriTavern 是 WebView2 封装，客户端 `config.yaml` 里**没有**这个开关，
+              Windows 上 WebView2 默认走硬件加速（除非显卡驱动异常）→ 无法在此处调
+          · 「Performance degradation, particularly **input lag**, is most commonly
+            attributed to **extensions**」→ 与本轮实测结论一致
