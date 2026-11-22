@@ -5991,15 +5991,36 @@
                我感觉它比较占地方，把那个字给删掉吧。」
              → 那个字就在我们面板「导入 / 新建」那一行的正上方（抽屉头），
                面板自己的一级页已经有统计行了，再顶着一个「世界书」纯属重复占位。
+           【★ v2.6.0 修的一个真 bug】
+             原来的选择器是 `wi.querySelector('#WorldInfoheader h3 span')` ——
+             这是「后代选择器」，意思是「#WorldInfoheader 内部的 h3 里的 span」。
+             但原生 DOM 是（index.html:4676）：
+                 <div id="WorldInfoheader" class="fa-solid fa-grip drag-grabber"></div>
+                 <div class="flex-container alignitemscenter gap10px">
+                   <div id="WI_panel_pin_div">…</div>
+                   <h3 class="margin0">
+                     <span data-i18n="Worlds/Lorebooks">Worlds/Lorebooks</span>
+                     <a …><span class="note-link-span"></span></a>
+                   </h3>
+                 </div>
+             → h3 是 #WorldInfoheader 的**兄弟节点的子节点**，不是它的后代！
+               所以那个选择器**永远返回 null** —— 也就是说
+               「把抽屉标题改成『世界书』」这件事从来没生效过，
+               抽屉头一直显示的是原生 i18n 的标题。
+               （本轮探针实测：document.querySelector('#WorldInfoheader h3 span') === null，
+                 证实了这一点。）
+             现在改成按 i18n key 找，找不到再退化到第一个 h3 > span。
            【为什么清空而不是 remove 节点】
              那个 span 带 data-i18n="Worlds/Lorebooks"，酒馆切语言时会再往里写字。
              删节点的话，i18n 那一步可能报错或者在别处补一个空标题出来。
-             → 保留节点、清空文字，再由 CSS 把这个 span 藏掉（见 skin.css）。
-               两道保险：文字空 + 看不见，i18n 写回来也看不见。 */
-        var titleEl = wi.querySelector('#WorldInfoheader h3 span');
+             → 保留节点、清空文字、打上自己的 class，再由 CSS 把它藏掉
+               （见 skin.css 的 .mf-wi-hide）。两道保险：文字空 + 看不见，
+               i18n 写回来也看不见。 */
+        var titleEl = wi.querySelector('h3 > span[data-i18n="Worlds/Lorebooks"]') || wi.querySelector('h3 > span');
         if (titleEl) {
             titleEl.dataset.mfOrig = '';
             titleEl.textContent = '';
+            titleEl.classList.add('mf-wi-hide');
         }
 
         function retitle() {
@@ -6955,12 +6976,23 @@
             /* ★ v2.6.0：没有头像的角色卡打 .mf-nopic → CSS 用默认图填上。
                判据是「img 有没有 src」，不是「有没有 img 节点」——
                原生在图没加载出来时也会先插一个 <img>（src 为空），
-               那时候就该算没头像。 */
+               那时候就该算没头像。
+               另外给 img 挂一个 error 兜底：图加载失败（文件被删/404）时也换上默认图，
+               不然就是一张破图。 */
             var av = chars[j].querySelector('.avatar');
             if (av) {
                 var im = av.querySelector('img');
-                if (im && im.getAttribute('src')) av.classList.remove('mf-nopic');
-                else av.classList.add('mf-nopic');
+                if (im && im.getAttribute('src')) {
+                    av.classList.remove('mf-nopic');
+                    if (!im.getAttribute('data-mf-err')) {
+                        im.setAttribute('data-mf-err', '1');
+                        im.addEventListener('error', function () {
+                            if (im.parentElement) im.parentElement.classList.add('mf-nopic');
+                        });
+                    }
+                } else {
+                    av.classList.add('mf-nopic');
+                }
             }
         }
     }

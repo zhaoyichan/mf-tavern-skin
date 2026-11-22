@@ -3500,10 +3500,10 @@ body.dark #mfWb, body[data-theme="dark"] #mfWb, #mfWb.mf-night { --paper:#1a1d23
 /* ★ v2.6.0：抽屉头的「世界书」三个字删掉
    （用户 2026-11-22 原话：「世界书那个导入新建的上面有一个世界书这个字，
      我感觉它比较占地方，把那个字给删掉吧。」）
-   JS 那头已经把文字清空了，这里再藏一层：
-   那个 span 带 data-i18n="Worlds/Lorebooks"，酒馆切语言时会往里写字 ——
-   只清文字的话，切完语言字又回来了。两道保险才稳。 */
-#WorldInfo.mf-wb-on #WorldInfoheader h3 > span {
+   JS 那头已经把文字清空，并给这个 span 打了 .mf-wi-hide；
+   用 class 而不是 i18n key 来选 —— 那个 span 带 data-i18n="Worlds/Lorebooks"，
+   酒馆切语言时会往里写字，只清文字的话，切完语言字又回来了。两道保险才稳。 */
+#WorldInfo.mf-wb-on .mf-wi-hide {
     display: none !important;
 }
 
