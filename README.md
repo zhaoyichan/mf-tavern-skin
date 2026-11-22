@@ -9,8 +9,10 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.5.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.6.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
+| ★ 扩展静态资源 | **这个客户端不给 third-party 扩展开静态资源路由**：`/scripts/extensions/third-party/<name>/x.jpg` 与 `/extensions/third-party/<name>/x.jpg` 实测全是 404。→ 扩展要带图，只能 base64 内联成 data URI（注入脚本 `tools/inject_wall_imgs.js`） |
+| 照片的挂载点 | 扩链「照片」功能 v2.6.0 起：一张**全局**图（IndexedDB key = `__global__`），挂在**每个角色的最后一条** AI 消息上方（`.mes_block` 里，`.ch_name` 之后、`.mes_text` 之前） |
 | 右滑重生成 | 原生 `.swipe_right` 箭头住在 `.swipeRightBlock` 里。点它 = 切下一条备选；**当这条已经是最后一条备选（`.last_swipe`）时再点 = OVERSWIPE → `OVERSWIPE_BEHAVIOR.REGENERATE` = 重新生成**（原生 `script.js` 约 10410 行） |
 | 原生箭头的显隐 | 酒馆原生 `style.css` 两条规则决定它什么时候出现：`body:not(.swipeAllMessages) .mes:not(.last_mes) :is(.swipe_left,.swipe_right,.swipes-counter)` 和 `.mes:not(.swipes_visible,.last_swipe) :is(.swipe_right)` —— 所以最后一条消息上那个箭头**一直都在**，误触一次烧一次 token |
 | ★ 隐藏 ≠ 删除 | 我们的面板用 `display:none` 藏原生节点（`#wi-holder`、`#rm_button_bar`），**节点还在 DOM 里 → JS `.click()` 照样能触发**（`display:none` 的元素也能派发 click）。这是「导入世界书」「新建角色卡」两个入口能低成本补回来的前提 |
@@ -621,3 +623,33 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
         ★ 实机验证（TauriTavern + 探针法，CDP 端口对这个客户端无效）：
         5 条消息 / ⟳ 按钮 1 个且在最后一条 AI 消息上 / `.swipe_right` display:none /
         「导入」chip 在 / 「＋ 新建」在 / 8s·20s·45s 三次快照零异常。
+
+2.6.0 — 2026-11-22 ★ 砍掉预设折叠 + 照片改全局 + 角色墙加号卡与默认图：
+        ① **预设面板的折叠功能整个删掉**。
+           用户口径：「我点进去它突然会一会儿详细一会儿简单的」。
+           根因：折叠靠给节点打 .mf-pv-hide，**酒馆只要重建一次预设块**
+           （切 API 类型 / 换预设 / 重连），新节点就没那个 class → 面板自己弹回详细态；
+           而巡检因为 .mf-pv-fold 还在就直接 return，永远补不回来 → 反复横跳。
+           现在预设面板完全交给酒馆原生，index.js 与 skin.css 里的 mf-pv-* 规则全删。
+        ② **消息上的照片：从「每个角色一张」改成「全局一张」，挂点从第一条改成最后一条**。
+           用户口径：「每个角色在最后的一条消息发一张图片，而不是第一条，
+           因为是对话的形式，所以我要现场图片嘛」「默认这个图片是全局的，
+           导入一张图片，其他新开对话、换一个角色，那个图片还是在，只有自己去换了才会换」。
+           → 存储 key 固定成 `__global__`；挂载点 = 每个角色的**最后一条** AI 消息。
+           老数据（按角色名存的）自动迁移：全局图为空时挑一张老图提升为全局，其余保留不删。
+        ③ **角色墙末尾加一张「＋ 新建」卡**（用户口径：「在角色墙在最末尾也加一个相似的框，
+           不过那个框里面是一个加号，这样的话就可以新建了」）。
+           它复用 .character_select 的 class 好复用整套网格样式 → 必须在 mfMarkWall 里
+           排除掉（否则会挤掉 hero / big 格的序号）；点它 stopPropagation 后走原生
+           `#rm_button_create`；原生 printCharacters 每次重绘会 empty() 整块 → 靠已有的
+           MutationObserver 补回来。
+        ④ **没有头像的角色卡用默认图**（用户给了两张图，「随机一张当默认图」）。
+           ★ 这个客户端**不提供** third-party 扩展的静态资源路由
+             （/scripts/extensions/third-party/<name>/x.jpg 与 /extensions/... 全 404），
+             图片放目录里浏览器根本取不到 → 只能 base64 内联成 data URI。
+           图压到 360×540 jpeg q80（45KB / 37KB），base64 后 59KB / 48KB；
+           注入脚本 `tools/inject_wall_imgs.js`（手写 base64 会把 diff 撑爆）。
+           随机只在页面加载时选一次 —— 每次刷新面板都换图会像在抽卡。
+        ⑤ **世界书抽屉头的「世界书」三个字删掉**（用户口径：「导入新建的上面有一个世界书这个字，
+           我感觉它比较占地方」）。JS 清空文字 + CSS 藏 span 两道保险 ——
+           那个 span 带 data-i18n="Worlds/Lorebooks"，酒馆切语言会往里写字，只清文字会白清。

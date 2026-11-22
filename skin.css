@@ -3497,6 +3497,16 @@ body.dark #mfWb, body[data-theme="dark"] #mfWb, #mfWb.mf-night { --paper:#1a1d23
     margin-bottom: 0;
 }
 
+/* ★ v2.6.0：抽屉头的「世界书」三个字删掉
+   （用户 2026-11-22 原话：「世界书那个导入新建的上面有一个世界书这个字，
+     我感觉它比较占地方，把那个字给删掉吧。」）
+   JS 那头已经把文字清空了，这里再藏一层：
+   那个 span 带 data-i18n="Worlds/Lorebooks"，酒馆切语言时会往里写字 ——
+   只清文字的话，切完语言字又回来了。两道保险才稳。 */
+#WorldInfo.mf-wb-on #WorldInfoheader h3 > span {
+    display: none !important;
+}
+
 /* ── 自动保存状态条 ──
    ★ 空闲时必须完全收起（display:none）：里面那个 <i> 小圆点会一直占着 22px 高，
      看着像凭空多出一条空白。只有 on/ok/err 三种状态才出现。 */
@@ -4158,6 +4168,51 @@ body[data-mf-ph-fade="none"] .mf-ph .mf-ph-img {
   border: none !important;
   box-shadow: none !important;
   display: block;
+}
+
+/* ── v2.6.0：没有头像的角色卡 → 用默认图填上 ──
+   用户 2026-11-22 原话：「把那个角色墙那个默认图片改成这个。」（给了两张图，随机一张）
+   ★ 图是 base64 内联在 index.js 里的（这个客户端不给扩展目录开静态资源路由），
+     变量 --mf-wall-default-img 由 JS 在页面加载时随机设一次。 */
+#rm_print_characters_block.mf-wall > .character_select > .avatar.mf-nopic {
+  background-image: var(--mf-wall-default-img, none);
+  background-size: cover;
+  background-position: 50% 12%;
+  background-repeat: no-repeat;
+}
+
+/* ── v2.6.0：末尾「＋ 新建」卡 ──
+   用户 2026-11-22 原话：「角色墙在最末尾也加一个相似的框，
+     不过那个框里面是一个加号，这样的话就可以新建了。」
+   ★ 它故意复用 .character_select 的 class 好复用整套网格样式，
+     所以这里要盖掉真卡片的背景与阴影，做出「占位框」的观感。 */
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard {
+  background: var(--mf-wall-accent-soft, #faf0ec) !important;
+  box-shadow: none;
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard:hover {
+  background: var(--mf-wall-accent-soft, #faf0ec) !important;
+  box-shadow: 0 0 0 1.5px var(--mf-wall-accent, #9c4a35);
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard > .avatar.mf-newcard-av {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  background: none !important;
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard .mf-newcard-plus svg {
+  width: 26px;
+  height: 26px;
+  color: var(--mf-wall-accent, #9c4a35);
+  opacity: .6;
+  transition: opacity .16s ease;
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard:hover .mf-newcard-plus svg {
+  opacity: 1;
+}
+#rm_print_characters_block.mf-wall > .character_select.mf-newcard .ch_name {
+  color: var(--mf-wall-accent-deep, #85392a);
+  opacity: .85;
 }
 
 /* ── 名字条：图下方一条白带 ──
@@ -5341,32 +5396,13 @@ body.dark #mf-detail .mfd-banner .mfd-fade {
   margin: 4px 0;
 }
 
-/* ── 预设（左栏 AI 响应配置）：收起 / 展开 ──
-   .mf-pv-hide 是 JS 精确标出来的节点（采样块 / 预设标题行 / 图标簇 / 提示条）。
-   ★ 只在"收起态"才隐藏 —— 展开态不用写任何"还原"规则，
-     因为隐藏条件本身带 :not(.mf-pv-open)。这样就不会踩 display:revert 的坑。 */
-#left-nav-panel.mf-pv-fold:not(.mf-pv-open) .mf-pv-hide {
-  display: none !important;
-}
-
-#left-nav-panel.mf-pv-fold #left-nav-panelheader {
-  height: 10px;
-  min-height: 10px;
-}
-
-/* 预设下拉那一行：下拉吃掉整行，⋯ 定在最右 */
-#left-nav-panel.mf-pv-fold select[id^="settings_preset"] {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-#left-nav-panel.mf-pv-fold .mf-fold-btn {
-  margin-left: 6px;
-}
-#left-nav-panel.mf-pv-open .mf-fold-btn {
-  color: var(--mf-wall-accent, #9c4a35);
-  border-color: var(--mf-wall-accent, #9c4a35);
-  background: var(--mf-wall-accent-soft, #faf0ec);
-}
+/* ── 预设（左栏 AI 响应配置）：★ v2.6.0 已删除折叠样式 ──
+   原来的折叠靠给节点打 .mf-pv-hide + #left-nav-panel.mf-pv-fold 驱动，
+   酒馆一旦重建预设块，新节点就没那个 class，面板就在
+   「详细 ↔ 简单」之间反复横跳（用户 2026-11-22 原话：
+     「我点进去它突然会一会儿详细一会儿简单的」）。
+   → 预设面板整个交回酒馆原生，这里一条规则都不留。
+   （.mf-fold-btn 的通用样式还在 —— 世界书折叠按钮还在用它。） */
 
 
 /* ═══════════════════════════════════════════════════════════════════════
