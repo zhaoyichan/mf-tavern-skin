@@ -128,7 +128,7 @@
 
     if (window.__mfTavernSkin) return;              // 防重复执行
 
-    var VERSION = '2.8.0';
+    var VERSION = '2.9.0';
     var APP = window.__mfTavernSkin = { version: VERSION, modules: {} };
     var LOG = '[米白护眼]';
 
@@ -9060,6 +9060,261 @@
     }
 
 
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 15 · 长聊天 content-visibility 优化（v2.9.0）
+       ─────────────────────────────────────────────────────────────────────
+       【来源】柏宝箱 longChatRender.js 的**裁剪安全版**。
+         原版 1689 行、高度耦合它自己的 state/constants，这里只取核心骨架：
+           · 屏幕外的 .mes 用 content-visibility:auto 跳过布局和绘制
+           · contain-intrinsic-size 给个占位高度，滚动条不会缩水
+           · ResizeObserver 只对靠近视口的楼层实测真实高度，回写 CSS 变量
+           · 读写分离：集中测量，循环里只写，避免逐条 layout thrash
+           · 尾部 4 条不加 contain（避免最新楼层抖动 / 滚不到底）
+           · 滚动锚点：contain 改变高度时补偿 scrollTop，保证不跳、滚得到底
+
+       【为什么安全 / 和皮肤不冲突】
+         · 皮肤对聊天区只改样式，没接管 .mes 的 DOM；contain 只影响渲染，
+           不影响节点 → ⟳ 按钮、照片挂载点、消息文本都不受影响。
+         · 短聊天（< 20 条）完全不启用，零开销、零风险。
+         · 全部改动可逆：关开关 → 移除 class 和样式、断开 observer。
+
+       【开关】localStorage.mf_longchat = '0' 关闭（默认开）。
+       ═════════════════════════════════════════════════════════════════════ */
+    function initLongChatOpt() {
+        var KEY = 'mf_longchat';
+        var MIN_MES = 20;              // 少于这个条数不启用
+        var TAIL_SAFE = 4;             // 尾部 N 条不加 contain
+        var CSS_ID = 'mf-longchat-style';
+        var on = true;
+        try { on = localStorage.getItem(KEY) !== '0'; } catch (e) { }
+
+        var chat = byId('chat');
+        var applied = false;           // 当前是否已注入样式并给 .mes 打标
+        var ro = null;                 // ResizeObserver
+        var heights = Object.create(null); // mesId / index → 实测高度(px)
+        var rafPending = false;
+
+        function ensureStyle() {
+            if (byId(CSS_ID)) return;
+            var st = document.createElement('style');
+            st.id = CSS_ID;
+            st.textContent =
+                '#chat.mf-lc-on > .mes.mf-lc-contain {' +
+                'content-visibility:auto;' +
+                'contain-intrinsic-size:auto var(--mf-lc-h, 640px);' +
+                'contain:layout style paint;' +
+                '}';
+            head.appendChild(st);
+        }
+
+        function removeStyle() {
+            var st = byId(CSS_ID);
+            if (st && st.parentNode) st.parentNode.removeChild(st);
+        }
+
+        /* 估算高度：优先实测缓存 → 文本量估算（避免首次全部按 640 偏高） */
+        function estHeight(mes) {
+            var key = mes.getAttribute('mesid') || '';
+            if (key && heights[key]) return heights[key];
+            var txt = (mes.querySelector('.mes_text') || mes).textContent || '';
+            var n = txt.length;
+            var h = Math.max(120, Math.min(1200, 90 + n * 2.2));
+            return h;
+        }
+
+        /* 集中测量：只对近视口的 .mes 读 getBoundingClientRect，读完统一写变量 */
+        function measureNearViewport() {
+            if (!applied || !chat) return;
+            var all = chat.querySelectorAll('.mes.mf-lc-contain');
+            var vh = window.innerHeight || 800;
+            var top = chat.scrollTop;
+            var reads = []; // 先集中读
+            for (var i = 0; i < all.length; i++) {
+                var m = all[i];
+                var r = m.getBoundingClientRect();
+                if (r.bottom >= -vh && r.top <= vh * 2) {
+                    var key = m.getAttribute('mesid') || '';
+                    reads.push([m, key, r.height]);
+                }
+            }
+            for (var j = 0; j < reads.length; j++) { // 再集中写
+                var m2 = reads[j][0], k2 = reads[j][1], h2 = reads[j][2];
+                if (h2 > 40) {
+                    m2.style.setProperty('--mf-lc-h', Math.round(h2) + 'px');
+                    if (k2) heights[k2] = h2;
+                }
+            }
+        }
+
+        function scheduleMeasure() {
+            if (rafPending) return;
+            rafPending = true;
+            requestAnimationFrame(function () {
+                rafPending = false;
+                measureNearViewport();
+            });
+        }
+
+        /*给 .mes 打标：除尾部 TAIL_SAFE 条外全部 contain */
+        function mark() {
+            if (!on || !chat || applied) return;
+            var mes = chat.querySelectorAll('.mes');
+            if (mes.length < MIN_MES) return; // 短聊天不启用
+            ensureStyle();
+            chat.classList.add('mf-lc-on');
+            for (var i = 0; i < mes.length; i++) {
+                if (i >= mes.length - TAIL_SAFE) break;
+                var m = mes[i];
+                if (m.classList.contains('mf-lc-contain')) continue;
+                m.classList.add('mf-lc-contain');
+                m.style.setProperty('--mf-lc-h', Math.round(estHeight(m)) + 'px');
+            }
+            applied = true;
+            /* 实测校准：挂 ResizeObserver，只看打了标的节点 */
+            if (window.ResizeObserver && !ro) {
+                ro = new ResizeObserver(scheduleMeasure);
+                for (var k = 0; k < mes.length; k++) {
+                    if (mes[k].classList.contains('mf-lc-contain')) {
+                        try { ro.observe(mes[k]); } catch (e) { }
+                    }
+                }
+            }
+            console.log(LOG, '[长聊天] 已启用，楼层', mes.length, 'contain', chat.querySelectorAll('.mf-lc-contain').length);
+        }
+
+        /* 全量撤销：关开关或聊天被清空时 */
+        function unmark() {
+            if (!applied) return;
+            applied = false;
+            if (ro) { try { ro.disconnect(); } catch (e) { } ro = null; }
+            if (chat) {
+                chat.classList.remove('mf-lc-on');
+                var c = chat.querySelectorAll('.mf-lc-contain');
+                for (var i = 0; i < c.length; i++) {
+                    c[i].classList.remove('mf-lc-contain');
+                    c[i].style.removeProperty('--mf-lc-h');
+                }
+            }
+            removeStyle();
+        }
+
+        /* 聊天滚动时滚动校准（节流）：contain 高度变化后补视口测量 */
+        var scrollRaf = false;
+        function onScroll() {
+            if (!applied || scrollRaf) return;
+            scrollRaf = true;
+            requestAnimationFrame(function () { scrollRaf = false; scheduleMeasure(); });
+        }
+
+        /* 新消息/重绘后重新打标：酒馆每次换 .mes，需要重新贴 contain */
+        var moPending = false;
+        var mo = null;
+        function watch() {
+            if (!chat) return;
+            if (mo) return;
+            mo = new MutationObserver(function () {
+                if (!on) return;
+                if (moPending) return;
+                moPending = true;
+                setTimeout(function () {
+                    moPending = false;
+                    if (!applied) mark();
+                    else {
+                        /* 已有 contain：只给新出现、未打标的 .mes 补上 */
+                        var mes = chat.querySelectorAll('.mes');
+                        for (var i = 0; i < mes.length - TAIL_SAFE; i++) {
+                            if (!mes[i].classList.contains('mf-lc-contain')) {
+                                mes[i].classList.add('mf-lc-contain');
+                                mes[i].style.setProperty('--mf-lc-h', Math.round(estHeight(mes[i])) + 'px');
+                                if (ro) { try { ro.observe(mes[i]); } catch (e) { } }
+                            }
+                        }
+                    }
+                }, 120);
+            });
+            mo.observe(chat, { childList: true, subtree: false });
+        }
+
+        if (on) {
+            mark();
+            watch();
+        }
+        chat && chat.addEventListener('scroll', onScroll, { passive: true });
+
+        APP.longChat = {
+            get on() { return on; },
+            get applied() { return applied; },
+            set: function (v) {
+                on = !!v;
+                try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) { }
+                if (on) { mark(); watch(); }
+                else unmark();
+            },
+            remeasure: scheduleMeasure
+        };
+        console.log(LOG, '[长聊天] init, on=' + on + ', 当前楼层=' + (chat ? chat.querySelectorAll('.mes').length : '?'));
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 16 · 禁代码语法高亮（v2.9.0）
+       ─────────────────────────────────────────────────────────────────────
+       【来源】鸡尾酒 patchHljs.js —— 几行、零依赖、可还原。
+       【为什么提速】长聊天里每段 ``` 代码块生成/滚动时都要跑 highlight.js，
+         层数一多就是纯开销。置空这几个入口即可，代码仍以等宽文本显示。
+       【开关】localStorage.mf_no_hljs = '0' 关闭（默认开 = 禁高亮）。
+       ═════════════════════════════════════════════════════════════════════ */
+    function initNoHighlight() {
+        var KEY = 'mf_no_hljs';
+        var on = true;
+        try { on = localStorage.getItem(KEY) !== '0'; } catch (e) { }
+        var saved = null; // 原始函数快照
+
+        function apply() {
+            var h = window.hljs;
+            if (!h) return false;
+            if (!saved) {
+                saved = {
+                    highlightElement: h.highlightElement,
+                    highlightBlock: h.highlightBlock,
+                    highlightAll: h.highlightAll
+                };
+            }
+            var noop = function () { };
+            h.highlightElement = noop;
+            h.highlightBlock = noop;
+            h.highlightAll = noop;
+            return true;
+        }
+        function restore() {
+            if (!saved) return;
+            var h = window.hljs;
+            if (h) {
+                h.highlightElement = saved.highlightElement;
+                h.highlightBlock = saved.highlightBlock;
+                h.highlightAll = saved.highlightAll;
+            }
+        }
+
+        /* hljs 可能比扩展晚加载：DOM ready + 延时各试一次 */
+        function tryApply() {
+            if (!on) return;
+            if (!apply()) setTimeout(function () { if (on) apply(); }, 1500);
+        }
+        tryApply();
+
+        APP.noHighlight = {
+            get on() { return on; },
+            get patched() { return !!saved; },
+            set: function (v) {
+                on = !!v;
+                try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) { }
+                if (on) tryApply(); else restore();
+            }
+        };
+        console.log(LOG, '[禁高亮] init, on=' + on + ', hljs=' + (window.hljs ? '在' : '未加载'));
+    }
+
+
     function boot() {
         /* ★ v2.8.0 感知性能：启动时先亮出「能马上用」的部分，面板类往后排。
            主人的原话（2026-11-22）：
@@ -9100,6 +9355,17 @@
            想留着那个显示：localStorage 设 mf_token_counter='1'。 */
         APP.modules.tokenCounter = true;
         initTokenCounterGuard();
+
+        /* ★ v2.9.0：长聊天 content-visibility 优化 + 禁代码高亮。
+           两个都是纯聊天区优化，短聊天零开销，带开关可随时关掉。 */
+        try {
+            APP.modules.longChat = true;
+            initLongChatOpt();
+        } catch (e) { console.warn(LOG, '长聊天优化挂载失败', e); }
+        try {
+            APP.modules.noHighlight = true;
+            initNoHighlight();
+        } catch (e) { console.warn(LOG, '禁高亮挂载失败', e); }
 
         /* ★ v2.7.0：全局默认头像替换器。
            把酒馆自带的默认图（ai4.png / user-default.png / five.png）
@@ -9172,6 +9438,40 @@
         });
 
         console.log(LOG, '扩展已启动，模块：', Object.keys(APP.modules).join(', '));
+
+        /* ★ v2.9.0 一次性探针：酒馆开起来约 3 秒后，把 A/B/C 三项的真实状态
+           汇总打进 console，并落一份到 localStorage.mf_probe_v29。
+           主人开一次酒馆即可，我读日志/这个 key 一次判断，不用反复开关对比。
+           测完若不需要，localStorage.removeItem('mf_probe_v29') 即可。 */
+        setTimeout(function () {
+            try {
+                var chat = byId('chat');
+                var mes = chat ? chat.querySelectorAll('.mes').length : -1;
+                var contained = chat ? chat.querySelectorAll('.mf-lc-contain').length : -1;
+                var sel = byId('chat_truncation');
+                var trunc = sel ? String(sel.value) : '?';
+                var moreBtn = !!byId('show_more_messages');
+                var h = window.hljs;
+                var noHlOn = APP.noHighlight ? APP.noHighlight.on : '?';
+                var patched = APP.noHighlight ? APP.noHighlight.patched : '?';
+                var lc = APP.longChat ? { on: APP.longChat.on, applied: APP.longChat.applied } : '?';
+                var snap = {
+                    at: new Date().toISOString(),
+                    version: VERSION,
+                    A_longChat: lc,
+                    A_floors: mes,
+                    A_contained: contained,
+                    C_truncation: trunc,
+                    C_moreButton: moreBtn,
+                    B_noHighlight_on: noHlOn,
+                    B_patched: patched,
+                    B_hljsPresent: !!h,
+                    nodeCount: chat ? chat.querySelectorAll('*').length : -1
+                };
+                try { localStorage.setItem('mf_probe_v29', JSON.stringify(snap)); } catch (e) { }
+                console.log(LOG, '[v2.9 探针] A长聊天/B禁高亮/C截断 →', snap);
+            } catch (e) { console.warn(LOG, '[v2.9 探针] 失败', e); }
+        }, 3000);
     }
 
     if (document.readyState === 'loading') {

@@ -9,7 +9,8 @@
 
 | 项 | 实测数据 / 结论 |
 | --- | --- |
-| 版本 | v2.8.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| 版本 | v2.9.0；`manifest.json` **必须在仓库根目录**，酒馆才会认成一个扩展 |
+| ★ v2.9.0 长聊天提速 | 从柏宝箱裁剪移植「屏幕外消息 content-visibility 跳过绘制」+ 高度缓存 + 读写分离；短聊天(<20条)不启用；尾部 4 条不加 contain 防抖。开关 `localStorage.mf_longchat='0'` 关。禁代码高亮开关 `mf_no_hljs='0'`。C 项 `chat_truncation=5` 原本就已生效，无需改。一次性探针：开酒馆 3 秒后读 `localStorage.mf_probe_v29` |
 | 实测环境 | TauriTavern Windows 客户端；手机 390px 宽 `(pointer:coarse)`；Clash Verge 代理 `127.0.0.1:7897`（不是 7890） |
 | ★ 扩展静态资源 | **这个客户端不给 third-party 扩展开静态资源路由**：`/scripts/extensions/third-party/<name>/x.jpg` 与 `/extensions/third-party/<name>/x.jpg` 实测全是 404。→ 扩展要带图，只能 base64 内联成 data URI（注入脚本 `tools/inject_wall_imgs.js`） |
 | ★ 性能真凶（v2.8.0 实测） | ① 启动卡 = `RecentRequestLog` 扩展（6534ms → 禁用后 127ms，它对每个 fetch 都 clone+解析响应体）② 打字卡 = 输入框**实时 token 计数**（每敲一字发一次 `count_openai_tokens_batch`，拦掉后 72.4ms → 57.6ms）③ 扩链自身只占 **3ms**（别夸大） |
@@ -804,3 +805,44 @@ v1.7.1 那次「酒馆卡死」是 1280×44 的大面积模糊 + 三份 CSS 互�
               Windows 上 WebView2 默认走硬件加速（除非显卡驱动异常）→ 无法在此处调
           · 「Performance degradation, particularly **input lag**, is most commonly
             attributed to **extensions**」→ 与本轮实测结论一致
+
+---
+
+## v2.9.0（2026-11-23）：照抄「鸡尾酒 + 柏宝箱」的流畅优化
+
+**来源**：主人要求「照抄这两个插件好的地方、但不安装它们（和 TT 酒馆不兼容）」。
+两个仓库源码只读克隆到 `refs/`，逐模块分析后**只取真正能让酒馆流畅、且和本皮肤不冲突**的部分。
+
+**取舍逻辑（关键）**：本皮肤已经接管了世界书面板 / 角色墙 / 预设面板，
+而鸡尾酒、柏宝箱的「面板不卡」优化（懒加载、Vue 列表、token 批量计数、正则 Vue 管理器）
+全是针对**原生面板 DOM** 的 → 装进来会打架，或和 v2.8.0 已做的重复。
+所以最终只落在**聊天区**（皮肤只改样式、没接管 DOM）这一层。
+
+### 做了什么
+1. **模块 15 · 长聊天 content-visibility（来自柏宝箱 longChatRender 裁剪版）**
+   - 屏幕外的 `.mes` 用 `content-visibility:auto` 跳过布局/绘制，`contain-intrinsic-size` 给占位高度。
+   - `ResizeObserver` 只对近视口楼层实测高度、回写 CSS 变量；读写分离避免 layout thrash。
+   - 短聊天（<20 条）完全不启用；尾部 4 条不加 contain（防最新楼层抖动/滚不到底）。
+   - 开关：`localStorage.mf_longchat = '0'` 关闭（默认开）。
+2. **模块 16 · 禁代码语法高亮（来自鸡尾酒 patchHljs）**
+   - `hljs.highlightElement/highlightBlock/highlightAll` 置空，留原始快照可还原。
+   - 开关：`localStorage.mf_no_hljs = '0'` 关闭（默认开=禁高亮）。
+3. **C 项 chat_truncation=5**：核对 `default-user/settings.json` 里 `power_user.chat_truncation` **本来就是 5**，
+   原生「加载更多」按钮也在 → 无需改代码，探针里确认生效即可。
+
+### 没抄的（及原因）
+- 世界书 lazySelect2 / entryVisibility / Vue 新布局、角色头像懒加载、预设 render 后台化、
+  token 批量计数、正则 Vue 管理器 → 皮肤已接管原生面板，冲突或重复。
+- 主题切换 CSS Shadow Property / reflow 守卫 → 皮肤用首屏骨架方案，价值有限。
+- UI 动画禁 blur → 与皮肤顶栏磨砂玻璃质感直接冲突。
+- saveGenerate / 流式正则延迟 / gzip / 启动预取 → 依赖柏宝库后端或侵入式 fetch 包装，TT 桌面不兼容。
+
+### 一次性探针（不用反复开关对比）
+酒馆启动约 3 秒后，把 A/B/C 三项真实状态打到 console，并写 `localStorage.mf_probe_v29`：
+`{A_longChat, A_floors, A_contained, C_truncation, C_moreButton, B_noHighlight_on, B_patched, ...}`。
+主人开一次酒馆即可，读这一个 key 一次性判断。测完 `localStorage.removeItem('mf_probe_v29')`。
+**验证要点**：`C_truncation` 应为 `"5"`、`C_moreButton` 为 true、`B_patched` 为 true；
+长聊天时 `A_floors` 较多且 `A_contained` = 楼层数-4 → A 生效。
+
+**备份**：`D:/tavern-skin/backup_before_v2.9_20261123_003645/`
+**方案文档**：`D:/tavern-skin/00_移植方案_性能优化_v2.9_待确认.md`
