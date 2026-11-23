@@ -342,9 +342,40 @@
             /* 骨架大约 18 条规则；超过 30 条就是主题 CSS 混进来了 */
             if (n > 30) installSkeleton(0);
         }
-        if (!themeGuardTimer) {
-            themeGuardTimer = setInterval(guardThemeSlot, 5000);
+        /* ★ v3.0.0：本机既然装了米白皮肤，酒馆就不该再叠一个主题。
+           实测（appearance.json: power_user.theme='微信读书-米'）：主题切换时
+           applyTheme() 会把该主题的 custom_css 灌进 #custom-style，和皮肤打架
+           → 画面每隔几秒在两套样式之间跳。按主人 2026-11-06 定的原则
+           「扩展本身就是主题，前面不该还有主题 / 要秒加载」，这里在启动时把
+           当前主题名清成空，让米白这一个 Theme 独占。
+           · 只动 power_user.theme 这一个字段，不碰角色/预设/其他任何设置。
+           · 主题文件本身不删，随时能在酒馆主题列表里切回去。
+           · 同时删掉旧的 5 秒守卫定时器——主题清掉后已无人来抢，留着反而误伤。 */
+        function clearRivalTheme(attempt) {
+            try {
+                var ctx = window.SillyTavern && typeof window.SillyTavern.getContext === 'function'
+                    ? window.SillyTavern.getContext() : null;
+                var pu = (ctx && ctx.powerUserSettings) || window.power_user;
+                if (!pu) {
+                    if (attempt < 10) setTimeout(function () { clearRivalTheme(attempt + 1); }, 300);
+                    return;
+                }
+                if (pu.theme) {
+                    console.log(LOG, '清掉酒馆原主题「' + pu.theme + '」，由米白皮肤独占');
+                    pu.theme = '';
+                    /* 主题名清空后，applyTheme('') 会因找不到主题直接 return，
+                       不再往 #custom-style 灌主题 CSS；首屏骨架已在上面装好，
+                       米白皮肤由 skin.css 的 <link> 独占生效，无需重灌。 */
+                    if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+                }
+            } catch (e) {
+                console.warn(LOG, '清主题失败（不影响皮肤生效）', e);
+            }
         }
+        setTimeout(function () { clearRivalTheme(0); }, 350);
+
+        /* v3.0.0：删掉旧的 5 秒守卫定时器。此前它每 5 秒把主题 CSS 覆盖回
+           骨架，正是「放着不动自己来回跳」的元凶；主题已清空，不再需要。 */
 
         setTimeout(function () {
             if (!findSkin()) {
@@ -2319,6 +2350,15 @@
                 '<span class="mf-fs-v mf-pad-v" data-a="pad0" title="点击恢复默认 3.5%"></span>' +
                 '<button type="button" data-a="pad+" title="正文离两边远一点">+</button>' +
                 '</div></div>' +
+                '<div class="mf-upd" id="mf-upd">' +
+                '<button type="button" class="mf-upd-toggle" data-a="update">检查更新 ↻</button>' +
+                '<div class="mf-upd-box" id="mf-upd-box" style="display:none">' +
+                  '<div class="mf-upd-t">选择要更新的部分</div>' +
+                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="both" checked><span>两个都更新（主题 + 生图）</span></label>' +
+                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="skin"><span>只更新主题</span></label>' +
+                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="art"><span>只更新生图</span></label>' +
+                  '<button type="button" class="mf-upd-go" data-a="update-go">开始更新</button>' +
+                '</div></div>' +
                 '<div class="mf-mg-foot"><span class="mf-grow"></span>' +
                 '<button type="button" data-a="reset">全部恢复</button>' +
                 '<button type="button" data-a="native">还原原生顶栏</button>' +
@@ -2339,7 +2379,42 @@
                 var b = e.target.closest('button[data-a], .mf-fs-v');
                 if (!b) return;
                 var a = b.getAttribute('data-a') || 'fs0';
-                if (a === 'reset') {
+                if (a === 'update') {
+                    // 展开/收起更新选项框
+                    var box = byId('mf-upd-box');
+                    if (box) box.style.display = (box.style.display === 'none') ? 'block' : 'none';
+                } else if (a === 'update-go') {
+                    // 三个选项：both=主题+生图，skin=只主题，art=只生图（默认 both）
+                    if (typeof updateExtension !== 'function') {
+                        notice('当前酒馆不支持自动更新，请手动重装扩展', { ms: 5000 });
+                        return;
+                    }
+                    var picked = panel.querySelector('input[name="mf-upd-scope"]:checked');
+                    var scope = picked ? picked.value : 'both';
+                    var targets = [];
+                    if (scope === 'both' || scope === 'skin') targets.push({ id: 'mf-tavern-skin', name: '主题' });
+                    if (scope === 'both' || scope === 'art') targets.push({ id: 'nai-art-workbench', name: '生图' });
+                    var label = targets.map(function (t) { return t.name; }).join(' + ');
+                    notice('正在更新 ' + label + '…', { ms: 3000 });
+                    var okCount = 0, doneCount = 0;
+                    targets.forEach(function (t) {
+                        try {
+                            var p = updateExtension(t.id);
+                            if (p && typeof p.then === 'function') {
+                                p.then(function (resp) {
+                                    if (resp && resp.ok) okCount++;
+                                    if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
+                                }).catch(function () {
+                                    if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
+                                });
+                            } else {
+                                if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
+                            }
+                        } catch (err) {
+                            if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
+                        }
+                    });
+                } else if (a === 'reset') {
                     hidden = {};
                     wr(KEY_HID, '[]');
                     apply();
@@ -2445,6 +2520,17 @@
             toastEl.classList.toggle('mf-toast-wide', !!opts.wide);
             toastEl.classList.add('on');
             toastTimer = setTimeout(function () { toastEl.classList.remove('on'); }, opts.ms || 4200);
+        }
+
+        // 更新完成汇总（主题/生图可能分两次更新）
+        function finishUpdate(okCount, total, label, noticeFn) {
+            if (okCount === total) {
+                noticeFn('已更新 ' + label + ' 到最新版，即将刷新生效…', { ms: 3000, wide: true });
+                if (typeof triggerSlash === 'function') setTimeout(function () { triggerSlash('/reload-page'); }, 2500);
+                else setTimeout(function () { location.reload(); }, 2500);
+            } else {
+                noticeFn('部分更新失败（' + okCount + '/' + total + '），请稍后重试或手动重装', { ms: 5000, wide: true });
+            }
         }
 
         function toast(name, k) {
@@ -9481,8 +9567,6 @@
     }
 })();
 
-
-/* ===== 生图工作台模块 · 逻辑（合体并入）===== */
 /* fflate_inline_marker: zip 解压库(照抄 node_modules/fflate/umd/index.js)，内联以避免 manifest 多 js 加载风险 */
 !function(f){typeof module!='undefined'&&typeof exports=='object'?module.exports=f():typeof define!='undefined'&&define.amd?define(f):(typeof self!='undefined'?self:this).fflate=f()}(function(){var _e={};"use strict";_e.deflate=zt,_e.deflateSync=kt,_e.inflate=At,_e.inflateSync=Tt,_e.gzip=It,_e.compress=It,_e.gzipSync=Ut,_e.compressSync=Ut,_e.gunzip=Zt,_e.gunzipSync=qt,_e.zlib=Lt,_e.zlibSync=Bt,_e.unzlib=Nt,_e.unzlibSync=Pt,_e.gzip=It,_e.compress=It,_e.decompress=Jt,_e.decompressSync=Kt,_e.strToU8=nn,_e.strFromU8=rn,_e.zip=dn,_e.zipSync=gn,_e.unzip=zn,_e.unzipSync=kn;var t=(typeof module!='undefined'&&typeof exports=='object'?function(_f){"use strict";var e,r,t,n=";var __w=require('worker_threads');__w.parentPort.on('message',function(m){onmessage({data:m})}),postMessage=function(m,t){__w.parentPort.postMessage(m,t)},close=process.exit;self=global";try{e=require("worker_threads"),r=e.Worker,t=e.isMarkedAsUntransferable}catch(e){}exports.default=r?function(e,o,a,s,u){var i=!1,l=new r(e+n,{eval:!0}).on("error",function(e){return u(e,null)}).on("message",function(e){return u(null,e)}).on("exit",function(e){e&&!i&&u(Error("exited with code "+e),null)});return t&&(s=s.filter(function(e){return!t(e)})),l.postMessage(a,s),l.terminate=function(){return i=!0,r.prototype.terminate.call(l)},l}:function(e,r,t,n,o){setImmediate(function(){return o(Error("async operations unsupported - update to Node 12+ (or Node 10-11 with the --experimental-worker CLI flag)"),null)});var a=function(){};return{terminate:a,postMessage:a}};return _f}:function(_f){"use strict";var e={};_f.default=function(r,t,s,a,n){var o=new Worker(e[t]||(e[t]=URL.createObjectURL(new Blob([r+';addEventListener("error",function(e){e=e.error;postMessage({$e$:[e.message,e.code,e.stack]})})'],{type:"text/javascript"}))));return o.onmessage=function(e){var r=e.data,t=r.$e$;if(t){var s=Error(t[0]);s.code=t[1],s.stack=t[2],n(s,null)}else n(null,r)},o.postMessage(s,a),o};return _f})({}),n=Uint8Array,r=Uint16Array,i=Int32Array,e=new n([0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0,0,0,0]),o=new n([0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13,0,0]),s=new n([16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15]),a=function(t,n){for(var e=new r(31),o=0;o<31;++o)e[o]=n+=1<<t[o-1];var s=new i(e[30]);for(o=1;o<30;++o)for(var a=e[o];a<e[o+1];++a)s[a]=a-e[o]<<5|o;return{b:e,r:s}},u=a(e,2),h=u.b,f=u.r;h[28]=258,f[258]=28;for(var c=a(o,0),l=c.b,p=c.r,v=new r(32768),d=0;d<32768;++d){var g=(43690&d)>>1|(21845&d)<<1;v[d]=((65280&(g=(61680&(g=(52428&g)>>2|(13107&g)<<2))>>4|(3855&g)<<4))>>8|(255&g)<<8)>>1}var y=function(t,n,i){for(var e=t.length,o=0,s=new r(n);o<e;++o)t[o]&&++s[t[o]-1];var a,u=new r(n);for(o=1;o<n;++o)u[o]=u[o-1]+s[o-1]<<1;if(i){a=new r(1<<n);var h=15-n;for(o=0;o<e;++o)if(t[o])for(var f=o<<4|t[o],c=n-t[o],l=u[t[o]-1]++<<c,p=l|(1<<c)-1;l<=p;++l)a[v[l]>>h]=f}else for(a=new r(e),o=0;o<e;++o)t[o]&&(a[o]=v[u[t[o]-1]++]>>15-t[o]);return a},m=new n(288);for(d=0;d<144;++d)m[d]=8;for(d=144;d<256;++d)m[d]=9;for(d=256;d<280;++d)m[d]=7;for(d=280;d<288;++d)m[d]=8;var b=new n(32);for(d=0;d<32;++d)b[d]=5;var w=y(m,9,0),x=y(m,9,1),z=y(b,5,0),k=y(b,5,1),M=function(t){for(var n=t[0],r=1;r<t.length;++r)t[r]>n&&(n=t[r]);return n},S=function(t,n,r){var i=n/8|0;return(t[i]|t[i+1]<<8)>>(7&n)&r},A=function(t,n){var r=n/8|0;return(t[r]|t[r+1]<<8|t[r+2]<<16)>>(7&n)},T=function(t){return(t+7)/8|0},D=function(t,r,i){return(null==r||r<0)&&(r=0),(null==i||i>t.length)&&(i=t.length),new n(t.subarray(r,i))};_e.FlateErrorCode={UnexpectedEOF:0,InvalidBlockType:1,InvalidLengthLiteral:2,InvalidDistance:3,StreamFinished:4,NoStreamHandler:5,InvalidHeader:6,NoCallback:7,InvalidUTF8:8,ExtraFieldTooLong:9,InvalidDate:10,FilenameTooLong:11,StreamFinishing:12,InvalidZipData:13,UnknownCompressionMethod:14};var C=["unexpected EOF","invalid block type","invalid length/literal","invalid distance","stream finished","no stream handler",,"no callback","invalid UTF-8 data","extra field too long","date not in range 1980-2099","filename too long","stream finishing","invalid zip data"],I=function(t,n,r){var i=Error(n||C[t]);if(i.code=t,Error.captureStackTrace&&Error.captureStackTrace(i,I),!r)throw i;return i},U=function(t,r,i,a){var u=t.length,f=a?a.length:0;if(!u||r.f&&!r.l)return i||new n(0);var c=!i,p=c||2!=r.i,v=r.i;c&&(i=new n(3*u));var d=function(t){var r=i.length;if(t>r){var e=new n(Math.max(2*r,t));e.set(i),i=e}},g=r.f||0,m=r.p||0,b=r.b||0,w=r.l,z=r.d,C=r.m,U=r.n,F=8*u;do{if(!w){g=S(t,m,1);var E=S(t,m+1,3);if(m+=3,!E){var Z=t[(Y=T(m)+4)-4]|t[Y-3]<<8,q=Y+Z;if(q>u){v&&I(0);break}p&&d(b+Z),i.set(t.subarray(Y,q),b),r.b=b+=Z,r.p=m=8*q,r.f=g;continue}if(1==E)w=x,z=k,C=9,U=5;else if(2==E){var O=S(t,m,31)+257,G=S(t,m+10,15)+4,L=O+S(t,m+5,31)+1;m+=14;for(var B=new n(L),H=new n(19),j=0;j<G;++j)H[s[j]]=S(t,m+3*j,7);m+=3*G;var N=M(H),P=(1<<N)-1,V=y(H,N,1);for(j=0;j<L;){var Y,J=V[S(t,m,P)];if(m+=15&J,(Y=J>>4)<16)B[j++]=Y;else{var K=0,Q=0;for(16==Y?(Q=3+S(t,m,3),m+=2,K=B[j-1]):17==Y?(Q=3+S(t,m,7),m+=3):18==Y&&(Q=11+S(t,m,127),m+=7);Q--;)B[j++]=K}}var R=B.subarray(0,O),W=B.subarray(O);C=M(R),U=M(W),w=y(R,C,1),z=y(W,U,1)}else I(1);if(m>F){v&&I(0);break}}p&&d(b+131072);for(var X=(1<<C)-1,$=(1<<U)-1,_=m;;_=m){var tt=(K=w[A(t,m)&X])>>4;if((m+=15&K)>F){v&&I(0);break}if(K||I(2),tt<256)i[b++]=tt;else{if(256==tt){_=m,w=null;break}var nt=tt-254;tt>264&&(nt=S(t,m,(1<<(et=e[j=tt-257]))-1)+h[j],m+=et);var rt=z[A(t,m)&$],it=rt>>4;if(rt||I(3),m+=15&rt,W=l[it],it>3){var et=o[it];W+=A(t,m)&(1<<et)-1,m+=et}if(m>F){v&&I(0);break}p&&d(b+131072);var ot=b+nt;if(b<W){var st=f-W,at=Math.min(W,ot);for(st+b<0&&I(3);b<at;++b)i[b]=a[st+b]}for(;b<ot;++b)i[b]=i[b-W]}}r.l=w,r.p=_,r.b=b,r.f=g,w&&(g=1,r.m=C,r.d=z,r.n=U)}while(!g);return b!=i.length&&c?D(i,0,b):i.subarray(0,b)},F=function(t,n,r){var i=n/8|0;t[i]|=r<<=7&n,t[i+1]|=r>>8},E=function(t,n,r){var i=n/8|0;t[i]|=r<<=7&n,t[i+1]|=r>>8,t[i+2]|=r>>16},Z=function(t,i){for(var e=[],o=0;o<t.length;++o)t[o]&&e.push({s:o,f:t[o]});var s=e.length,a=e.slice();if(!s)return{t:j,l:0};if(1==s){var u=new n(e[0].s+1);return u[e[0].s]=1,{t:u,l:1}}e.sort(function(t,n){return t.f-n.f}),e.push({s:-1,f:25001});var h=e[0],f=e[1],c=0,l=1,p=2;for(e[0]={s:-1,f:h.f+f.f,l:h,r:f};l!=s-1;)h=e[e[c].f<e[p].f?c++:p++],f=e[c!=l&&e[c].f<e[p].f?c++:p++],e[l++]={s:-1,f:h.f+f.f,l:h,r:f};var v=a[0].s;for(o=1;o<s;++o)a[o].s>v&&(v=a[o].s);var d=new r(v+1),g=q(e[l-1],d,0);if(g>i){o=0;var y=0,m=g-i,b=1<<m;for(a.sort(function(t,n){return d[n.s]-d[t.s]||t.f-n.f});o<s;++o){var w=a[o].s;if(!(d[w]>i))break;y+=b-(1<<g-d[w]),d[w]=i}for(y>>=m;y>0;){var x=a[o].s;d[x]<i?y-=1<<i-d[x]++-1:++o}for(;o>=0&&y;--o){var z=a[o].s;d[z]==i&&(--d[z],++y)}g=i}return{t:new n(d),l:g}},q=function(t,n,r){return-1==t.s?Math.max(q(t.l,n,r+1),q(t.r,n,r+1)):n[t.s]=r},O=function(t){for(var n=t.length;n&&!t[--n];);for(var i=new r(++n),e=0,o=t[0],s=1,a=function(t){i[e++]=t},u=1;u<=n;++u)if(t[u]==o&&u!=n)++s;else{if(!o&&s>2){for(;s>138;s-=138)a(32754);s>2&&(a(s>10?s-11<<5|28690:s-3<<5|12305),s=0)}else if(s>3){for(a(o),--s;s>6;s-=6)a(8304);s>2&&(a(s-3<<5|8208),s=0)}for(;s--;)a(o);s=1,o=t[u]}return{c:i.subarray(0,e),n:n}},G=function(t,n){for(var r=0,i=0;i<n.length;++i)r+=t[i]*n[i];return r},L=function(t,n,r){var i=r.length,e=T(n+2);t[e]=255&i,t[e+1]=i>>8,t[e+2]=255^t[e],t[e+3]=255^t[e+1];for(var o=0;o<i;++o)t[e+o+4]=r[o];return 8*(e+4+i)},B=function(t,n,i,a,u,h,f,c,l,p,v){F(n,v++,i),++u[256];for(var d=Z(u,15),g=d.t,x=d.l,k=Z(h,15),M=k.t,S=k.l,A=O(g),T=A.c,D=A.n,C=O(M),I=C.c,U=C.n,q=new r(19),B=0;B<T.length;++B)++q[31&T[B]];for(B=0;B<I.length;++B)++q[31&I[B]];for(var H=Z(q,7),j=H.t,N=H.l,P=19;P>4&&!j[s[P-1]];--P);var V,Y,J,K,Q=p+5<<3,R=G(u,m)+G(h,b)+f,W=G(u,g)+G(h,M)+f+14+3*P+G(q,j)+2*q[16]+3*q[17]+7*q[18];if(l>=0&&Q<=R&&Q<=W)return L(n,v,t.subarray(l,l+p));if(F(n,v,1+(W<R)),v+=2,W<R){V=y(g,x,0),Y=g,J=y(M,S,0),K=M;var X=y(j,N,0);for(F(n,v,D-257),F(n,v+5,U-1),F(n,v+10,P-4),v+=14,B=0;B<P;++B)F(n,v+3*B,j[s[B]]);v+=3*P;for(var $=[T,I],_=0;_<2;++_){var tt=$[_];for(B=0;B<tt.length;++B)F(n,v,X[rt=31&tt[B]]),v+=j[rt],rt>15&&(F(n,v,tt[B]>>5&127),v+=tt[B]>>12)}}else V=w,Y=m,J=z,K=b;for(B=0;B<c;++B){var nt=a[B];if(nt>255){var rt;E(n,v,V[257+(rt=nt>>18&31)]),v+=Y[rt+257],rt>7&&(F(n,v,nt>>23&31),v+=e[rt]);var it=31&nt;E(n,v,J[it]),v+=K[it],it>3&&(E(n,v,nt>>5&8191),v+=o[it])}else E(n,v,V[nt]),v+=Y[nt]}return E(n,v,V[256]),v+Y[256]},H=new i([65540,131080,131088,131104,262176,1048704,1048832,2114560,2117632]),j=new n(0),N=function(t,s,a,u,h,c){var l=c.z||t.length,v=new n(u+l+5*(1+Math.ceil(l/7e3))+h),d=v.subarray(u,v.length-h),g=c.l,y=7&(c.r||0);if(s){y&&(d[0]=c.r>>3);for(var m=H[s-1],b=m>>13,w=8191&m,x=(1<<a)-1,z=c.p||new r(32768),k=c.h||new r(x+1),M=Math.ceil(a/3),S=2*M,A=function(n){return(t[n]^t[n+1]<<M^t[n+2]<<S)&x},C=new i(25e3),I=new r(288),U=new r(32),F=0,E=0,Z=c.i||0,q=0,O=c.w||0,G=0;Z+2<l;++Z){var j=A(Z),N=32767&Z,P=k[j];if(z[N]=P,k[j]=N,O<=Z){var V=l-Z;if((F>7e3||q>24576)&&(V>423||!g)){y=B(t,d,0,C,I,U,E,q,G,Z-G,y),q=F=E=0,G=Z;for(var Y=0;Y<286;++Y)I[Y]=0;for(Y=0;Y<30;++Y)U[Y]=0}var J=2,K=0,Q=w,R=N-P&32767;if(V>2&&j==A(Z-R))for(var W=Math.min(b,V)-1,X=Math.min(32767,Z),$=Math.min(258,V);R<=X&&--Q&&N!=P;){if(t[Z+J]==t[Z+J-R]){for(var _=0;_<$&&t[Z+_]==t[Z+_-R];++_);if(_>J){if(J=_,K=R,_>W)break;var tt=Math.min(R,_-2),nt=0;for(Y=0;Y<tt;++Y){var rt=Z-R+Y&32767,it=rt-z[rt]&32767;it>nt&&(nt=it,P=rt)}}}R+=(N=P)-(P=z[N])&32767}if(K){C[q++]=268435456|f[J]<<18|p[K];var et=31&f[J],ot=31&p[K];E+=e[et]+o[ot],++I[257+et],++U[ot],O=Z+J,++F}else C[q++]=t[Z],++I[t[Z]]}}for(Z=Math.max(Z,O);Z<l;++Z)C[q++]=t[Z],++I[t[Z]];y=B(t,d,g,C,I,U,E,q,G,Z-G,y),g||(c.r=7&y|d[y/8|0]<<3,y-=7,c.h=k,c.p=z,c.i=Z,c.w=O)}else{for(Z=c.w||0;Z<l+g;Z+=65535){var st=Z+65535;st>=l&&(d[y/8|0]=g,st=l),y=L(d,y+1,t.subarray(Z,st))}c.i=l}return D(v,0,u+T(y)+h)},P=function(){for(var t=new Int32Array(256),n=0;n<256;++n){for(var r=n,i=9;--i;)r=(1&r&&-306674912)^r>>>1;t[n]=r}return t}(),V=function(){var t=-1;return{p:function(n){for(var r=t,i=0;i<n.length;++i)r=P[255&r^n[i]]^r>>>8;t=r},d:function(){return~t}}},Y=function(){var t=1,n=0;return{p:function(r){for(var i=t,e=n,o=0|r.length,s=0;s!=o;){for(var a=Math.min(s+2655,o);s<a;++s)e+=i+=r[s];i=(65535&i)+15*(i>>16),e=(65535&e)+15*(e>>16)}t=i,n=e},d:function(){return(255&(t%=65521))<<24|(65280&t)<<8|(255&(n%=65521))<<8|n>>8}}},J=function(t,r,i,e,o){if(!o&&(o={l:1},r.dictionary)){var s=r.dictionary.subarray(-32768),a=new n(s.length+t.length);a.set(s),a.set(t,s.length),t=a,o.w=s.length}return N(t,null==r.level?6:r.level,null==r.mem?o.l?Math.ceil(1.5*Math.max(8,Math.min(13,Math.log(t.length)))):20:12+r.mem,i,e,o)},K=function(t,n){var r={};for(var i in t)r[i]=t[i];for(var i in n)r[i]=n[i];return r},Q=function(t,n,r){for(var i=t(),e=""+t,o=e.slice(e.indexOf("[")+1,e.lastIndexOf("]")).replace(/\s+/g,"").split(","),s=0;s<i.length;++s){var a=i[s],u=o[s];if("function"==typeof a){n+=";"+u+"=";var h=""+a;if(a.prototype)if(-1!=h.indexOf("[native code]")){var f=h.indexOf(" ",8)+1;n+=h.slice(f,h.indexOf("(",f))}else for(var c in n+=h,a.prototype)n+=";"+u+".prototype."+c+"="+a.prototype[c];else n+=h}else r[u]=a}return n},R=[],W=function(t){var n=[];for(var r in t)t[r].buffer&&n.push((t[r]=new t[r].constructor(t[r])).buffer);return n},X=function(n,r,i,e){if(!R[i]){for(var o="",s={},a=n.length-1,u=0;u<a;++u)o=Q(n[u],o,s);R[i]={c:Q(n[a],o,s),e:s}}var h=K({},R[i].e);return(0,t.default)(R[i].c+";onmessage=function(e){for(var k in e.data)self[k]=e.data[k];onmessage="+r+"}",i,h,W(h),e)},$=function(){return[n,r,i,e,o,s,h,l,x,k,v,C,y,M,S,A,T,D,I,U,Tt,et,ot]},_=function(){return[n,r,i,e,o,s,f,p,w,m,z,b,v,H,j,y,F,E,Z,q,O,G,L,B,T,D,N,J,kt,et]},tt=function(){return[pt,gt,lt,V,P]},nt=function(){return[vt,dt]},rt=function(){return[yt,lt,Y]},it=function(){return[mt]},et=function(t){return postMessage(t,[t.buffer])},ot=function(t){return t&&{out:t.size&&new n(t.size),dictionary:t.dictionary}},st=function(t,n,r,i,e,o){var s=X(r,i,e,function(t,n){s.terminate(),o(t,n)});return s.postMessage([t,n],n.consume?[t.buffer]:[]),function(){s.terminate()}},at=function(t){return t.ondata=function(t,n){return postMessage([t,n],[t.buffer])},function(n){n.data[0]?(t.push(n.data[0],n.data[1]),postMessage([n.data[0].length])):t.flush(n.data[1])}},ut=function(t,n,r,i,e,o,s){var a,u=X(t,i,e,function(t,r){t?(u.terminate(),n.ondata.call(n,t)):Array.isArray(r)?1==r.length?(n.queuedSize-=r[0],n.ondrain&&n.ondrain(r[0])):(r[1]&&u.terminate(),n.ondata.call(n,t,r[0],r[1])):s(r)});u.postMessage(r),n.queuedSize=0,n.push=function(t,r){n.ondata||I(5),a&&n.ondata(I(4,0,1),null,!!r),n.queuedSize+=t.length,u.postMessage([t,a=r],t.buffer instanceof ArrayBuffer?[t.buffer]:[])},n.terminate=function(){u.terminate()},o&&(n.flush=function(t){u.postMessage([0,t])})},ht=function(t,n){return t[n]|t[n+1]<<8},ft=function(t,n){return(t[n]|t[n+1]<<8|t[n+2]<<16|t[n+3]<<24)>>>0},ct=function(t,n){return ft(t,n)+4294967296*ft(t,n+4)},lt=function(t,n,r){for(;r;++n)t[n]=r,r>>>=8},pt=function(t,n){var r=n.filename;if(t[0]=31,t[1]=139,t[2]=8,t[8]=n.level<2?4:9==n.level?2:0,t[9]=3,0!=n.mtime&&lt(t,4,Math.floor(new Date(n.mtime||Date.now())/1e3)),r){t[3]=8;for(var i=0;i<=r.length;++i)t[i+10]=r.charCodeAt(i)}},vt=function(t){31==t[0]&&139==t[1]&&8==t[2]||I(6,"invalid gzip data");var n=t[3],r=10;4&n&&(r+=2+(t[10]|t[11]<<8));for(var i=(n>>3&1)+(n>>4&1);i>0;i-=!t[r++]);return r+(2&n)},dt=function(t){var n=t.length;return(t[n-4]|t[n-3]<<8|t[n-2]<<16|t[n-1]<<24)>>>0},gt=function(t){return 10+(t.filename?t.filename.length+1:0)},yt=function(t,n){var r=n.level,i=0==r?0:r<6?1:9==r?3:2;if(t[0]=120,t[1]=i<<6|(n.dictionary&&32),t[1]|=31-(t[0]<<8|t[1])%31,n.dictionary){var e=Y();e.p(n.dictionary),lt(t,2,e.d())}},mt=function(t,n){return(8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31)&&I(6,"invalid zlib data"),(t[1]>>5&1)==+!n&&I(6,"invalid zlib data: "+(32&t[1]?"need":"unexpected")+" dictionary"),2+(t[1]>>3&4)};function bt(t,n){return"function"==typeof t&&(n=t,t={}),this.ondata=n,t}var wt=function(){function t(t,r){if("function"==typeof t&&(r=t,t={}),this.ondata=r,this.o=t||{},this.s={l:0,i:32768,w:32768,z:32768},this.b=new n(98304),this.o.dictionary){var i=this.o.dictionary.subarray(-32768);this.b.set(i,32768-i.length),this.s.i=32768-i.length}}return t.prototype.p=function(t,n){this.ondata(J(t,this.o,0,0,this.s),n)},t.prototype.push=function(t,r){this.ondata||I(5),this.s.l&&I(4);var i=t.length+this.s.z;if(i>this.b.length){if(i>2*this.b.length-32768){var e=new n(-32768&i);e.set(this.b.subarray(0,this.s.z)),this.b=e}var o=this.b.length-this.s.z;this.b.set(t.subarray(0,o),this.s.z),this.s.z=this.b.length,this.p(this.b,!1),this.b.set(this.b.subarray(-32768)),this.b.set(t.subarray(o),32768),this.s.z=t.length-o+32768,this.s.i=32766,this.s.w=32768}else this.b.set(t,this.s.z),this.s.z+=t.length;this.s.l=1&r,(this.s.z>this.s.w+8191||r)&&(this.p(this.b,r||!1),this.s.w=this.s.i,this.s.i-=2),r&&(this.s=this.o={},this.b=j)},t.prototype.flush=function(t){if(this.ondata||I(5),this.s.l&&I(4),this.p(this.b,!1),this.s.w=this.s.i,this.s.i-=2,t){var r=new n(6);r[0]=this.s.r>>3;var i=L(r,this.s.r,j);this.s.r=0,this.ondata(r.subarray(0,i>>3),!1)}},t}();_e.Deflate=wt;var xt=function(){return function(t,n){ut([_,function(){return[at,wt]}],this,bt.call(this,t,n),function(t){var n=new wt(t.data);onmessage=at(n)},6,1)}}();function zt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_],function(t){return et(kt(t.data[0],t.data[1]))},0,r)}function kt(t,n){return J(t,n||{},0,0)}_e.AsyncDeflate=xt;var Mt=function(){function t(t,r){"function"==typeof t&&(r=t,t={}),this.ondata=r;var i=t&&t.dictionary&&t.dictionary.subarray(-32768);this.s={i:0,b:i?i.length:0},this.o=new n(32768),this.p=new n(0),i&&this.o.set(i)}return t.prototype.e=function(t){if(this.ondata||I(5),this.d&&I(4),this.p.length){if(t.length){var r=new n(this.p.length+t.length);r.set(this.p),r.set(t,this.p.length),this.p=r}}else this.p=t},t.prototype.c=function(t){this.s.i=+(this.d=t||!1);var n=this.s.b,r=U(this.p,this.s,this.o);this.ondata(D(r,n,this.s.b),this.d),this.o=D(r,this.s.b-32768),this.s.b=this.o.length,this.p=D(this.p,this.s.p/8|0),this.s.p&=7},t.prototype.push=function(t,n){this.e(t),this.c(n)},t}();_e.Inflate=Mt;var St=function(){return function(t,n){ut([$,function(){return[at,Mt]}],this,bt.call(this,t,n),function(t){var n=new Mt(t.data);onmessage=at(n)},7,0)}}();function At(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$],function(t){return et(Tt(t.data[0],ot(t.data[1])))},1,r)}function Tt(t,n){return U(t,{i:2},n&&n.out,n&&n.dictionary)}_e.AsyncInflate=St;var Dt=function(){function t(t,n){this.c=V(),this.l=0,this.v=1,wt.call(this,t,n)}return t.prototype.push=function(t,n){this.c.p(t),this.l+=t.length,wt.prototype.push.call(this,t,n)},t.prototype.p=function(t,n){var r=J(t,this.o,this.v&&gt(this.o),n&&8,this.s);this.v&&(pt(r,this.o),this.v=0),n&&(lt(r,r.length-8,this.c.d()),lt(r,r.length-4,this.l)),this.ondata(r,n)},t.prototype.flush=function(t){wt.prototype.flush.call(this,t)},t}();_e.Gzip=Dt,_e.Compress=Dt;var Ct=function(){return function(t,n){ut([_,tt,function(){return[at,wt,Dt]}],this,bt.call(this,t,n),function(t){var n=new Dt(t.data);onmessage=at(n)},8,1)}}();function It(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_,tt,function(){return[Ut]}],function(t){return et(Ut(t.data[0],t.data[1]))},2,r)}function Ut(t,n){n||(n={});var r=V(),i=t.length;r.p(t);var e=J(t,n,gt(n),8),o=e.length;return pt(e,n),lt(e,o-8,r.d()),lt(e,o-4,i),e}_e.AsyncGzip=Ct,_e.AsyncCompress=Ct;var Ft=function(){function t(t,n){this.v=1,this.r=0,Mt.call(this,t,n)}return t.prototype.push=function(t,r){if(Mt.prototype.e.call(this,t),this.r+=t.length,this.v){var i=this.p.subarray(this.v-1),e=i.length>3?vt(i):4;if(e>i.length){if(!r)return}else this.v>1&&this.onmember&&this.onmember(this.r-i.length);this.p=i.subarray(e),this.v=0}Mt.prototype.c.call(this,0),this.s.f&&!this.s.l?(this.v=T(this.s.p)+9,this.s={i:0},this.o=new n(0),this.push(new n(0),r)):r&&Mt.prototype.c.call(this,r)},t}();_e.Gunzip=Ft;var Et=function(){return function(t,n){var r=this;ut([$,nt,function(){return[at,Mt,Ft]}],this,bt.call(this,t,n),function(t){var n=new Ft(t.data);n.onmember=function(t){return postMessage(t)},onmessage=at(n)},9,0,function(t){return r.onmember&&r.onmember(t)})}}();function Zt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$,nt,function(){return[qt]}],function(t){return et(qt(t.data[0],t.data[1]))},3,r)}function qt(t,r){var i=vt(t);return i+8>t.length&&I(6,"invalid gzip data"),U(t.subarray(i,-8),{i:2},r&&r.out||new n(dt(t)),r&&r.dictionary)}_e.AsyncGunzip=Et;var Ot=function(){function t(t,n){this.c=Y(),this.v=1,wt.call(this,t,n)}return t.prototype.push=function(t,n){this.c.p(t),wt.prototype.push.call(this,t,n)},t.prototype.p=function(t,n){var r=J(t,this.o,this.v&&(this.o.dictionary?6:2),n&&4,this.s);this.v&&(yt(r,this.o),this.v=0),n&&lt(r,r.length-4,this.c.d()),this.ondata(r,n)},t.prototype.flush=function(t){wt.prototype.flush.call(this,t)},t}();_e.Zlib=Ot;var Gt=function(){return function(t,n){ut([_,rt,function(){return[at,wt,Ot]}],this,bt.call(this,t,n),function(t){var n=new Ot(t.data);onmessage=at(n)},10,1)}}();function Lt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_,rt,function(){return[Bt]}],function(t){return et(Bt(t.data[0],t.data[1]))},4,r)}function Bt(t,n){n||(n={});var r=Y();r.p(t);var i=J(t,n,n.dictionary?6:2,4);return yt(i,n),lt(i,i.length-4,r.d()),i}_e.AsyncZlib=Gt;var Ht=function(){function t(t,n){Mt.call(this,t,n),this.v=t&&t.dictionary?2:1}return t.prototype.push=function(t,n){if(Mt.prototype.e.call(this,t),this.v){if(this.p.length<6&&!n)return;this.p=this.p.subarray(mt(this.p,this.v-1)),this.v=0}n&&(this.p.length<4&&I(6,"invalid zlib data"),this.p=this.p.subarray(0,-4)),Mt.prototype.c.call(this,n)},t}();_e.Unzlib=Ht;var jt=function(){return function(t,n){ut([$,it,function(){return[at,Mt,Ht]}],this,bt.call(this,t,n),function(t){var n=new Ht(t.data);onmessage=at(n)},11,0)}}();function Nt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$,it,function(){return[Pt]}],function(t){return et(Pt(t.data[0],ot(t.data[1])))},5,r)}function Pt(t,n){return U(t.subarray(mt(t,n&&n.dictionary),-4),{i:2},n&&n.out,n&&n.dictionary)}_e.AsyncUnzlib=jt;var Vt=function(){function t(t,n){this.o=bt.call(this,t,n)||{},this.G=Ft,this.I=Mt,this.Z=Ht}return t.prototype.i=function(){var t=this;this.s.ondata=function(n,r){t.ondata(n,r)}},t.prototype.push=function(t,r){if(this.ondata||I(5),this.s)this.s.push(t,r);else{if(this.p&&this.p.length){var i=new n(this.p.length+t.length);i.set(this.p),i.set(t,this.p.length)}else this.p=t;this.p.length>2&&(this.s=31==this.p[0]&&139==this.p[1]&&8==this.p[2]?new this.G(this.o):8!=(15&this.p[0])||this.p[0]>>4>7||(this.p[0]<<8|this.p[1])%31?new this.I(this.o):new this.Z(this.o),this.i(),this.s.push(this.p,r),this.p=null)}},t}();_e.Decompress=Vt;var Yt=function(){function t(t,n){Vt.call(this,t,n),this.queuedSize=0,this.G=Et,this.I=St,this.Z=jt}return t.prototype.i=function(){var t=this;this.s.ondata=function(n,r,i){t.ondata(n,r,i)},this.s.ondrain=function(n){t.queuedSize-=n,t.ondrain&&t.ondrain(n)}},t.prototype.push=function(t,n){this.queuedSize+=t.length,Vt.prototype.push.call(this,t,n)},t}();function Jt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),31==t[0]&&139==t[1]&&8==t[2]?Zt(t,n,r):8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31?At(t,n,r):Nt(t,n,r)}function Kt(t,n){return 31==t[0]&&139==t[1]&&8==t[2]?qt(t,n):8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31?Tt(t,n):Pt(t,n)}_e.AsyncDecompress=Yt;var Qt=function(t,r,i,e){for(var o in t){var s=t[o],a=r+o,u=e;Array.isArray(s)&&(u=K(e,s[1]),s=s[0]),ArrayBuffer.isView(s)?i[a]=[s,u]:(i[a+="/"]=[new n(0),u],Qt(s,a,i,e))}},Rt="undefined"!=typeof TextEncoder&&new TextEncoder,Wt="undefined"!=typeof TextDecoder&&new TextDecoder,Xt=0;try{Wt.decode(j,{stream:!0}),Xt=1}catch(t){}var $t=function(t){for(var n="",r=0;;){var i=t[r++],e=(i>127)+(i>223)+(i>239);if(r+e>t.length)return{s:n,r:D(t,r-1)};e?3==e?(i=((15&i)<<18|(63&t[r++])<<12|(63&t[r++])<<6|63&t[r++])-65536,n+=String.fromCharCode(55296|i>>10,56320|1023&i)):n+=String.fromCharCode(1&e?(31&i)<<6|63&t[r++]:(15&i)<<12|(63&t[r++])<<6|63&t[r++]):n+=String.fromCharCode(i)}},_t=function(){function t(t){this.ondata=t,Xt?this.t=new TextDecoder:this.p=j}return t.prototype.push=function(t,r){if(this.ondata||I(5),r=!!r,this.t)return this.ondata(this.t.decode(t,{stream:!0}),r),void(r&&(this.t.decode().length&&I(8),this.t=null));this.p||I(4);var i=new n(this.p.length+t.length);i.set(this.p),i.set(t,this.p.length);var e=$t(i),o=e.s,s=e.r;r?(s.length&&I(8),this.p=null):this.p=s,this.ondata(o,r)},t}();_e.DecodeUTF8=_t;var tn=function(){function t(t){this.ondata=t}return t.prototype.push=function(t,n){this.ondata||I(5),this.d&&I(4),this.ondata(nn(t),this.d=n||!1)},t}();function nn(t,r){if(r){for(var i=new n(t.length),e=0;e<t.length;++e)i[e]=t.charCodeAt(e);return i}if(Rt)return Rt.encode(t);var o=t.length,s=new n(t.length+(t.length>>1)),a=0,u=function(t){s[a++]=t};for(e=0;e<o;++e){if(a+5>s.length){var h=new n(a+8+(o-e<<1));h.set(s),s=h}var f=t.charCodeAt(e);f<128||r?u(f):f<2048?(u(192|f>>6),u(128|63&f)):f>55295&&f<57344?(u(240|(f=65536+(1047552&f)|1023&t.charCodeAt(++e))>>18),u(128|f>>12&63),u(128|f>>6&63),u(128|63&f)):(u(224|f>>12),u(128|f>>6&63),u(128|63&f))}return D(s,0,a)}function rn(t,n){if(n){for(var r="",i=0;i<t.length;i+=16384)r+=String.fromCharCode.apply(null,t.subarray(i,i+16384));return r}if(Wt)return Wt.decode(t);var e=$t(t),o=e.s;return(r=e.r).length&&I(8),o}_e.EncodeUTF8=tn;var en=function(t){return 1==t?3:t<6?2:9==t?1:0},on=function(t,n){return n+30+ht(t,n+26)+ht(t,n+28)},sn=function(t,n,r){var i=ht(t,n+28),e=ht(t,n+30),o=rn(t.subarray(n+46,n+46+i),!(2048&ht(t,n+8))),s=n+46+i,a=an(t,s,e,r,ft(t,n+20),ft(t,n+24),ft(t,n+42)),u=a[0],h=a[1],f=a[2];return[ht(t,n+10),u,h,o,s+e+ht(t,n+32),f]},an=function(t,n,r,i,e,o,s){var a=4294967295==e,u=4294967295==o,h=4294967295==s,f=n+r;if(i&&a+u+h){for(;n+4<f;n+=4+ht(t,n+2))if(1==ht(t,n))return[a?ct(t,n+4+8*u):e,u?ct(t,n+4):o,h?ct(t,n+4+8*(u+a)):s,1];i<2&&I(13)}return[e,o,s,0]},un=function(t){var n=0;if(t)for(var r in t){var i=t[r].length;i>65535&&I(9),n+=i+4}return n},hn=function(t,n,r,i,e,o,s,a){var u=i.length,h=r.extra,f=a&&a.length,c=un(h);lt(t,n,null!=s?33639248:67324752),n+=4,null!=s&&(t[n++]=20,t[n++]=r.os),t[n]=20,n+=2,t[n++]=r.flag<<1|(o<0&&8),t[n++]=e&&8,t[n++]=255&r.compression,t[n++]=r.compression>>8;var l=new Date(null==r.mtime?Date.now():r.mtime),p=l.getFullYear()-1980;if((p<0||p>119)&&I(10),lt(t,n,p<<25|l.getMonth()+1<<21|l.getDate()<<16|l.getHours()<<11|l.getMinutes()<<5|l.getSeconds()>>1),n+=4,-1!=o&&(lt(t,n,r.crc),lt(t,n+4,o<0?-o-2:o),lt(t,n+8,r.size)),lt(t,n+12,u),lt(t,n+14,c),n+=16,null!=s&&(lt(t,n,f),lt(t,n+6,r.attrs),lt(t,n+10,s),n+=14),t.set(i,n),n+=u,c)for(var v in h){var d=h[v],g=d.length;lt(t,n,+v),lt(t,n+2,g),t.set(d,n+4),n+=4+g}return f&&(t.set(a,n),n+=f),n},fn=function(t,n,r,i,e){lt(t,n,101010256),lt(t,n+8,r),lt(t,n+10,r),lt(t,n+12,i),lt(t,n+16,e)},cn=function(){function t(t){this.filename=t,this.c=V(),this.size=0,this.compression=0}return t.prototype.process=function(t,n){this.ondata(null,t,n)},t.prototype.push=function(t,n){this.ondata||I(5),this.c.p(t),this.size+=t.length,n&&(this.crc=this.c.d()),this.process(t,n||!1)},t}();_e.ZipPassThrough=cn;var ln=function(){function t(t,n){var r=this;n||(n={}),cn.call(this,t),this.d=new wt(n,function(t,n){r.ondata(null,t,n)}),this.compression=8,this.flag=en(n.level)}return t.prototype.process=function(t,n){try{this.d.push(t,n)}catch(t){this.ondata(t,null,n)}},t.prototype.push=function(t,n){cn.prototype.push.call(this,t,n)},t}();_e.ZipDeflate=ln;var pn=function(){function t(t,n){var r=this;n||(n={}),cn.call(this,t),this.d=new xt(n,function(t,n,i){r.ondata(t,n,i)}),this.compression=8,this.flag=en(n.level),this.terminate=this.d.terminate}return t.prototype.process=function(t,n){this.d.push(t,n)},t.prototype.push=function(t,n){cn.prototype.push.call(this,t,n)},t}();_e.AsyncZipDeflate=pn;var vn=function(){function t(t){this.ondata=t,this.u=[],this.d=1}return t.prototype.add=function(t){var r=this;if(this.ondata||I(5),2&this.d)this.ondata(I(4+8*(1&this.d),0,1),null,!1);else{var i=nn(t.filename),e=i.length,o=t.comment,s=o&&nn(o),a=e!=t.filename.length||s&&o.length!=s.length,u=e+un(t.extra)+30;e>65535&&this.ondata(I(11,0,1),null,!1);var h=new n(u);hn(h,0,t,i,a,-1);var f=[h],c=function(){for(var t=0,n=f;t<n.length;t++)r.ondata(null,n[t],!1);f=[]},l=this.d;this.d=0;var p=this.u.length,v=K(t,{f:i,u:a,o:s,t:function(){t.terminate&&t.terminate()},r:function(){if(c(),l){var t=r.u[p+1];t?t.r():r.d=1}l=1}}),d=0;t.ondata=function(i,e,o){if(i)r.ondata(i,e,o),r.terminate();else if(d+=e.length,f.push(e),o){var s=new n(16);lt(s,0,134695760),lt(s,4,t.crc),lt(s,8,d),lt(s,12,t.size),f.push(s),v.c=d,v.b=u+d+16,v.crc=t.crc,v.size=t.size,l&&v.r(),l=1}else l&&c()},this.u.push(v)}},t.prototype.end=function(){var t=this;2&this.d?this.ondata(I(4+8*(1&this.d),0,1),null,!0):(this.d?this.e():this.u.push({r:function(){1&t.d&&(t.u.splice(-1,1),t.e())},t:function(){}}),this.d=3)},t.prototype.e=function(){for(var t=0,r=0,i=0,e=0,o=this.u;e<o.length;e++)i+=46+(h=o[e]).f.length+un(h.extra)+(h.o?h.o.length:0);for(var s=new n(i+22),a=0,u=this.u;a<u.length;a++){var h;hn(s,t,h=u[a],h.f,h.u,-h.c-2,r,h.o),t+=46+h.f.length+un(h.extra)+(h.o?h.o.length:0),r+=h.b}fn(s,t,this.u.length,i,r),this.ondata(null,s,!0),this.d=2},t.prototype.terminate=function(){for(var t=0,n=this.u;t<n.length;t++)n[t].t();this.d=2},t}();function dn(t,r,i){i||(i=r,r={}),"function"!=typeof i&&I(7);var e={};Qt(t,"",e,r);var o=Object.keys(e),s=o.length,a=0,u=0,h=s,f=Array(s),c=[],l=function(){for(var t=0;t<c.length;++t)c[t]()},p=function(t,n){xn(function(){i(t,n)})};xn(function(){p=i});var v=function(){var t=new n(u+22),r=a,i=u-a;u=0;for(var e=0;e<h;++e){var o=f[e];try{var s=o.c.length;hn(t,u,o,o.f,o.u,s);var c=30+o.f.length+un(o.extra),l=u+c;t.set(o.c,l),hn(t,a,o,o.f,o.u,s,u,o.m),a+=16+c+(o.m?o.m.length:0),u=l+s}catch(t){return p(t,null)}}fn(t,a,f.length,i,r),p(null,t)};s||v();for(var d=function(t){var n=o[t],r=e[n],i=r[0],h=r[1],d=V(),g=i.length;d.p(i);var y=nn(n),m=y.length,b=h.comment,w=b&&nn(b),x=w&&w.length,z=un(h.extra),k=0==h.level?0:8,M=function(r,i){if(r)l(),p(r,null);else{var e=i.length;f[t]=K(h,{size:g,crc:d.d(),c:i,f:y,m:w,u:m!=n.length||w&&b.length!=x,compression:k}),a+=30+m+z+e,u+=76+2*(m+z)+(x||0)+e,--s||v()}};if(m>65535&&M(I(11,0,1),null),k)if(g<16e4)try{M(null,kt(i,h))}catch(t){M(t,null)}else c.push(zt(i,h,M));else M(null,i)},g=0;g<h;++g)d(g);return l}function gn(t,r){r||(r={});var i={},e=[];Qt(t,"",i,r);var o=0,s=0;for(var a in i){var u=i[a],h=u[0],f=u[1],c=0==f.level?0:8,l=(M=nn(a)).length,p=f.comment,v=p&&nn(p),d=v&&v.length,g=un(f.extra);l>65535&&I(11);var y=c?kt(h,f):h,m=y.length,b=V();b.p(h),e.push(K(f,{size:h.length,crc:b.d(),c:y,f:M,m:v,u:l!=a.length||v&&p.length!=d,o:o,compression:c})),o+=30+l+g+m,s+=76+2*(l+g)+(d||0)+m}for(var w=new n(s+22),x=o,z=s-o,k=0;k<e.length;++k){var M;hn(w,(M=e[k]).o,M,M.f,M.u,M.c.length);var S=30+M.f.length+un(M.extra);w.set(M.c,M.o+S),hn(w,o,M,M.f,M.u,M.c.length,M.o,M.m),o+=16+S+(M.m?M.m.length:0)}return fn(w,o,e.length,z,x),w}_e.Zip=vn;var yn=function(){function t(){}return t.prototype.push=function(t,n){this.ondata(null,t,n)},t.compression=0,t}();_e.UnzipPassThrough=yn;var mn=function(){function t(){var t=this;this.i=new Mt(function(n,r){t.ondata(null,n,r)})}return t.prototype.push=function(t,n){try{this.i.push(t,n)}catch(t){this.ondata(t,null,n)}},t.compression=8,t}();_e.UnzipInflate=mn;var bn=function(){function t(t,n){var r=this;n<32e4?this.i=new Mt(function(t,n){r.ondata(null,t,n)}):(this.i=new St(function(t,n,i){r.ondata(t,n,i)}),this.terminate=this.i.terminate)}return t.prototype.push=function(t,n){this.i.terminate&&(t=D(t,0)),this.i.push(t,n)},t.compression=8,t}();_e.AsyncUnzipInflate=bn;var wn=function(){function t(t){this.onfile=t,this.k=[],this.o={0:yn},this.p=j}return t.prototype.push=function(t,r){var i=this;if(this.onfile||I(5),this.p||I(4),this.c>0){var e=Math.min(this.c,t.length),o=t.subarray(0,e);if(this.c-=e,this.d?this.d.push(o,!this.c):this.k[0].push(o),(t=t.subarray(e)).length)return this.push(t,r)}else{var s=0,a=0,u=void 0,h=void 0;this.p.length?t.length?((h=new n(this.p.length+t.length)).set(this.p),h.set(t,this.p.length)):h=this.p:h=t;for(var f=h.length,c=this.c,l=c&&this.d,p=function(){var t=ft(h,a);if(67324752==t){s=1,u=a,v.d=null,v.c=0;var n=ht(h,a+6),r=ht(h,a+8),e=2048&n,o=8&n,l=ht(h,a+26),p=ht(h,a+28);if(f>a+30+l+p){var d=[];v.k.unshift(d),s=2;var g,y=ft(h,a+18),m=ft(h,a+22),b=rn(h.subarray(a+30,a+=30+l),!e),w=an(h,a,p,2,y,m,0),x=w[0],z=w[1];o&&(x=-1-w[3]),a+=p,v.c=x;var k={name:b,compression:r,start:function(){if(k.ondata||I(5),x){var t=i.o[r];t||k.ondata(I(14,"unknown compression type "+r,1),null,!1),(g=x<0?new t(b):new t(b,x,z)).ondata=function(t,n,r){k.ondata(t,n,r)};for(var n=0,e=d;n<e.length;n++)g.push(e[n],!1);i.k[0]==d&&i.c?i.d=g:g.push(j,!0)}else k.ondata(null,j,!0)},terminate:function(){g&&g.terminate&&g.terminate()}};x>=0&&(k.size=x,k.originalSize=z),v.onfile(k)}return"break"}if(c){if(134695760==t)return u=a+=12+(-2==c&&8),s=3,v.c=0,"break";if(33639248==t)return u=a-=4,s=3,v.c=0,"break"}},v=this;a<f-4&&"break"!==p();++a);if(this.p=j,c<0){var d=h.subarray(0,s?u-12-(-2==c&&8)-(134695760==ft(h,u-16)&&4):a);l?l.push(d,!!s):this.k[+(2==s)].push(d)}if(2&s)return this.push(h.subarray(a),r);this.p=h.subarray(a)}r&&(this.c&&I(13),this.p=null)},t.prototype.register=function(t){this.o[t.compression]=t},t}();_e.Unzip=wn;var xn="function"==typeof queueMicrotask?queueMicrotask:"function"==typeof setTimeout?setTimeout:function(t){t()};function zn(t,r,i){i||(i=r,r={}),"function"!=typeof i&&I(7);var e=[],o=function(){for(var t=0;t<e.length;++t)e[t]()},s={},a=function(t,n){xn(function(){i(t,n)})};xn(function(){a=i});for(var u=t.length-22;101010256!=ft(t,u);--u)if(!u||t.length-u>65558)return a(I(13,0,1),null),o;var h=ht(t,u+8);if(h){var f=h,c=ft(t,u+16),l=117853008==ft(t,u-20);if(l){var p=ft(t,u-12);(l=101075792==ft(t,p))&&(f=h=ft(t,p+32),c=ft(t,p+48))}for(var v=r&&r.filter,d=function(r){var i=sn(t,c,l),u=i[0],f=i[1],p=i[2],d=i[3],g=i[4],y=on(t,i[5]);c=g;var m=function(t,n){t?(o(),a(t,null)):(n&&(s[d]=n),--h||a(null,s))};if(!v||v({name:d,size:f,originalSize:p,compression:u}))if(u)if(8==u){var b=t.subarray(y,y+f);if(p<524288||f>.8*p)try{m(null,Tt(b,{out:new n(p)}))}catch(t){m(t,null)}else e.push(At(b,{size:p},m))}else m(I(14,"unknown compression type "+u,1),null);else m(null,D(t,y,y+f));else m(null,null)},g=0;g<f;++g)d()}else a(null,{});return o}function kn(t,r){for(var i={},e=t.length-22;101010256!=ft(t,e);--e)(!e||t.length-e>65558)&&I(13);var o=ht(t,e+8);if(!o)return{};var s=ft(t,e+16),a=117853008==ft(t,e-20);if(a){var u=ft(t,e-12);(a=101075792==ft(t,u))&&(o=ft(t,u+32),s=ft(t,u+48))}for(var h=r&&r.filter,f=0;f<o;++f){var c=sn(t,s,a),l=c[0],p=c[1],v=c[2],d=c[3],g=c[4],y=on(t,c[5]);s=g,h&&!h({name:d,size:p,originalSize:v,compression:l})||(l?8==l?i[d]=Tt(t.subarray(y,y+p),{out:new n(v)}):I(14,"unknown compression type "+l):i[d]=D(t,y,y+p))}return i}return _e});
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -9491,8 +9575,8 @@
    ★ 独立插件：读真实正文 → 文本 AI 规划画面 → 用同一个中转接口生图 → 图夹进正文。
      ① 出图 = 标准 OpenAI POST {base}/v1/images/generations，body {model,prompt,n,size,
         response_format:'b64_json'}，返回 {"data":[{"b64_json":"..."}]} 直接 base64 取图。
-        ★ 实测定论：中转服务多为 New API 网关，只认 OpenAI 格式；NAI 原生
-        /ai/generate-image 返回的是中转首页 HTML（不是图），旧版照抄宝绘走 NAI zip 全挂。
+        ★ 实测定论：中转网关只认 OpenAI 格式；NAI 原生
+        /ai/generate-image 返回的是中转首页 HTML（不是图），旧版走 NAI zip 会全挂。
         fflate 内联库保留但已不用于生图解包。
      ② 提示词 = 正文按物理行切 P1/P2/P3 段，AI 一次输出
         JSON {images:[{position,tag,size}],changes:[{name,tag}]}；count=3 = 正文三个【不同瞬间】。
@@ -9502,7 +9586,7 @@
         tag 只存 <naw_plan>（隐藏数据，给插件读）：失败/重启都在。★ 点「正文生图」永远先走文本 AI 重新规划，不跳过。
      ⑤ 配置 = 生图端点（官方/第三方两个选项）+ 独立的「文本 AI 端点」：
         生图官方预填地址、第三方留空由使用者自己填；文本 AI 单独填 OpenAI 兼容
-        地址/key（小波这类只出图的中转没有聊天模型）。三组配置都只在本机存，
+        地址/key（有的中转只出图、没有聊天模型）。三组配置都只在本机存，
         不进源码、不上传，绝不覆盖已填值。
      ⑥ 日志 tab 顶部有「tag 注入演示」：把当前 tag 真正写进正文楼层并立刻重绘显示出来
         （只写 tag、不调生图/不烧额度，用来验证 tag 能不能注入正文）。
@@ -9521,7 +9605,7 @@
     var DB_STORE = 'images';
 
     /* ── 默认配置 ──
-       ★ 提示词真值：照抄宝绘 autoTag/prompt.ts 的 fixedContract（剧情画面规划 + 三瞬间协议）。
+       ★ 提示词真值：按 fixedContract 契约实现（剧情画面规划 + 三瞬间协议）。
          原文见 ST-BaiBai-Image/src/autoTag/prompt.ts 的 fixedContract 常量。
          关键：正文按物理行切 P1/P2/P3 段，每张图挑一个【不同的单一瞬间】各写英文 tag，
          count=3 = 正文里三个不同画面（像插画小说分镜），不是同一场景换镜头生三张。 */
@@ -9553,7 +9637,7 @@
         'nai-diffusion-4-full': 'no text, best quality, very aesthetic, absurdres',
         'nai-diffusion-3': 'best quality, amazing quality, very aesthetic, absurdres'
     };
-    // ★ 防崩强负面词：实测（中转网关）把它作为 negative_prompt 发给
+    // ★ 防崩强负面词：实测把它作为 negative_prompt 发给
     //   /v1/images/generations，对方接受且手脚/身体畸形明显消失。之前漏发该字段是崩图根因。
     var NAI_NEGATIVE_STRONG = 'bad anatomy, bad hands, bad feet, bad legs, bad arms, bad toes, bad fingers, ' +
         'extra limbs, extra arms, extra legs, extra digits, extra fingers, extra toes, extra thumbs, too many fingers, too many toes, ' +
@@ -9573,7 +9657,7 @@
     };
 
     /* ── 两个端点选项：官方 NAI / 第三方 ──
-       官方预填 image.novelai.net；第三方地址留空，由使用者自己填（不读宝绘、不预设任何地址）。
+       官方预填 image.novelai.net；第三方地址留空，由使用者自己填（不预设任何地址）。
        key 一律用已存的，不覆盖。 */
     var NAI_OFFICIAL = 'https://image.novelai.net';
     function thirdBase() { return ''; }   // 第三方地址留空，自己填
@@ -9587,7 +9671,7 @@
         txtModel: '__follow__',                  // __follow__=跟随酒馆读正文产 JSON；否则 OpenAI 兼容 /chat/completions
         txtBase: '', txtKey: '',                 // ★ 独立文本 AI 端点（OpenAI 兼容），与生图 apiBase/apiKey 完全分开
         imgModels: [], txtModels: [],            // 模型列表：生图模型 / 文本模型（拉取来的真实名字全列，用户自己选）
-        // NAI 采样参数（宝绘 plan 同款，真实发送）
+        // NAI 采样参数（真实随请求发送）
         naiScale: 7, naiSteps: 23, naiSampler: 'k_euler_ancestral',
         naiNoise: 'karras', naiCfgRescale: 0,
         portraitSize: '832×1216', landscapeSize: '1216×832',
@@ -9602,7 +9686,7 @@
         breakWords: { soft: '', strong: '' },
         artistCur: '',                           // 当前画师串（NAI 权重语法，拼在正向 prompt 最前）
         artists: [],                             // 画师串库 [{n,v}]
-        quality: '',                             // 留空=按模型取官方质量词（宝绘 naiQualityTags 同款）
+        quality: '',                             // 留空=按模型取官方质量词
         negative: '',                            // 留空=按模型取官方负面词
         schemes: [],                             // ★ 接口方案：每套只存 6 项（生图地址/key/模型 + 文本地址/key/模型）
         curScheme: '',                           // 当前使用的接口方案 id
@@ -9731,7 +9815,7 @@
             // ★ 迁移只做一次，且绝不碰使用者已填的 key / 端点 / 角色库 / 模型名。
             //   端点完全留给使用者自己填（第三方留空、官方点选预填），迁移不写、不清。
             if (saved.__migrated !== 'v22') {
-                settings.tagInstruction = DEFAULT_TAG_INSTRUCTION;  // 换成宝绘 fixedContract
+                settings.tagInstruction = DEFAULT_TAG_INSTRUCTION;  // 换成 fixedContract 契约
                 settings.mode = 'manual';
                 // 模型名：绝不按固定表校验/重置（第三方模型名带前缀，写死表会打回默认值）
                 if (!settings.imgModel) settings.imgModel = 'nai-diffusion-4-5-full';
@@ -9745,6 +9829,12 @@
                 if (!c.scope) { c.scope = 'global'; c.owner = ''; }
             });
             if (!settings.charScope) settings.charScope = 'global';
+            // ★ 一次性迁移：清掉旧的悬浮球位置（右下角），让球回到新的右侧中上默认；之后拖动照常记住
+            if (settings.__fabMigrated !== 'v2') {
+                settings.fabPos = null;
+                settings.__fabMigrated = 'v2';
+                saveSettings();
+            }
         }
     }
     function saveSettings() {
@@ -9830,7 +9920,7 @@
         return out;
     }
 
-    /* ── ★ 照抄宝绘 clean.ts prepareTargetText：正文按物理行切成 P1/P2/P3 段 ──
+    /* ── ★ 正文按物理行切成 P1/P2/P3 段 ──
        每一段是一个"单一瞬间"，段尾标 ⟦Pn⟧；图按 position 插到该段之后。
        只剥思维链/注释/设定块，保留剧情正文（含 liwe 里的叙事）。 */
     function prepareSegments(mes) {
@@ -9864,7 +9954,7 @@
         return segs.map(function (s) { return s.text + ' ⟦' + s.id + '⟧'; }).join('\n\n');
     }
 
-    /* ── ★ 照抄宝绘 protocol.ts parseImagePlan：从 AI 的 JSON 里取三张不同瞬间 ──
+    /* ── ★ 从 AI 的 JSON 里取三张不同瞬间 ──
        先剥 <thinking>，再容错取 JSON（代码块/裸对象/大括号扫描）。
        tag 必填、position 必须在候选段内；超上限截断、低于下限抛错。 */
     function parseImagePlan(raw, segs, minN, maxN) {
@@ -10176,15 +10266,42 @@
         return base + '/ai/' + seg;
     }
 
+    // ★ 接口超时保护：只中断真正卡死的请求，正常慢出图不受影响。
+    //   mode='buffer' 读 arrayBuffer（生图 zip），否则读 text（文本 AI / 模型列表）。
+    //   连响应体读取一起纳入超时，避免"头回来了、内容卡住"的假活死。
+    async function fetchWithTimeout(url, opts, ms, mode) {
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var o = {};
+        if (opts) Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
+        var timer = null;
+        if (ctrl) {
+            o.signal = ctrl.signal;
+            timer = setTimeout(function () { ctrl.abort(); }, ms || 180000);
+        }
+        try {
+            var res = await fetch(url, o);
+            var payload = mode === 'buffer' ? await res.arrayBuffer() : await res.text();
+            return { res: res, payload: payload };
+        } catch (e) {
+            var isAbort = e && (e.name === 'AbortError' || /abort/i.test(String(e.message || '')));
+            if (isAbort) {
+                throw new Error('接口超时（' + Math.round((ms || 180000) / 1000) + ' 秒无响应），请检查接口地址或稍后重试');
+            }
+            throw e;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
     // 文本生成：跟随酒馆 generateRaw，或自填 OpenAI 兼容接口；要求 AI 返回三瞬间 JSON
-    // system = 宝绘 fixedContract（数量规则已替换），user = 切成 P 段的完整正文
+    // system = fixedContract（数量规则已替换），user = 切成 P 段的完整正文
     async function genTags(segments, rawForRole) {
         var count = Math.max(1, Math.min(9, parseInt(settings.count, 10) || 3));
         var sys = DEFAULT_TAG_INSTRUCTION.replace('___COUNT_RULE___',
             'images 数量必须为 ' + count + ' 张。');
         var names = extractPersonNames(rawForRole || '');
         var mainName = pickMainCharacter(rawForRole || '', names);
-        // ★ 照抄宝绘 EC()：把可见角色档案渲染成【角色固定外貌库】，逐字抄进角色 tag；
+        // ★ 把可见角色档案渲染成【角色固定外貌库】，逐字抄进角色 tag；
         //   全局条目 [locked] = immutable，文本 AI 不得报告修改，只能照抄。
         var roleLine = buildCharLibraryBlock(names);
         var usr = '【目标正文（每段末尾 ⟦P编号⟧ 是该段位置，图要插在其后）】\n' +
@@ -10214,8 +10331,8 @@
         var headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + textKey };
         var body = { model: settings.txtModel, messages: messages, temperature: 0.7 };
         logReq('【文本AI】请求·读正文规划', url, body, null, true);
-        var res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
-        var rawText = await res.text();
+        var fr = await fetchWithTimeout(url, { method: 'POST', headers: headers, body: JSON.stringify(body) }, 180000);
+        var res = fr.res, rawText = fr.payload;
         if (!res.ok) {
             var tmsg = rawText; try { var te = JSON.parse(rawText); if (te.error && te.error.message) tmsg = te.error.message; } catch (e) {}
             logReq('【文本AI】失败·HTTP ' + res.status, url, body, 'HTTP ' + res.status + ' ' + tmsg, false);
@@ -10240,8 +10357,8 @@
         if (/\/v1$/.test(tb)) tb = tb.slice(0, -3);
         var url = tb + '/v1/models';
         logReq('【文本AI】模型列表·请求', url, { headers: { Authorization: 'Bearer ' + textKey } }, null, true);
-        var res = await fetch(url, { method: 'GET', headers: { Authorization: 'Bearer ' + textKey } });
-        var txt = await res.text();
+        var fr = await fetchWithTimeout(url, { method: 'GET', headers: { Authorization: 'Bearer ' + textKey } }, 30000);
+        var res = fr.res, txt = fr.payload;
         if (!res.ok) { logReq('【文本AI】模型列表·错误', url, null, 'HTTP ' + res.status + ' ' + txt.slice(0, 300), false); throw new Error('拉取模型 HTTP ' + res.status + ' ' + txt.slice(0, 120)); }
         var data; try { data = JSON.parse(txt); } catch (e) { throw new Error('模型列表不是 JSON'); }
         var list = (data && Array.isArray(data.data)) ? data.data.map(function (x) { return x.id; }).filter(Boolean) : [];
@@ -10268,7 +10385,7 @@
         if (ext === 'jpg') ext = 'jpeg';
         return 'data:image/' + ext + ';base64,' + b64FromBytes(files[name]);
     }
-    // quality/negative 留空则按模型取官方词（宝绘同款）
+    // quality/negative 留空则按模型取官方词
     // ★ 模型名可能带前缀（如 "[0.05/次][出图nai1] nai-diffusion-4-5-full"），
     //   所以查表按「后缀包含」匹配，而不是精确相等，否则官方质量词会全部落空。
     function naiModelKey(model) {
@@ -10297,7 +10414,7 @@
         var m = /(\d+)\s*[×xX]\s*(\d+)/.exec(String(text || ''));
         return m ? { w: parseInt(m[1], 10), h: parseInt(m[2], 10) } : { w: 832, h: 1216 };
     }
-    // 画师串(最前) + 画面tag + 质量词 —— 宝绘 fullPositivePrompt 同款
+    // 画师串(最前) + 画面tag + 质量词 
     function fullPositive(tag) {
         var parts = [];
         if (settings.artistCur && settings.artistCur.trim()) parts.push(settings.artistCur.trim().replace(/,+$/, ''));
@@ -10331,15 +10448,15 @@
         var positive = fullPositive(tag);
         var negative = naiNegative();
 
-        // ★ 照抄宝绘 NAI 原生：POST {base}/ai/generate-image，
+        // ★ NAI 原生：POST {base}/ai/generate-image，
         //   body {input, model, action:'generate', parameters:{...v4_prompt/v4_negative_prompt}}
         //   返回 application/zip，用内联 fflate 解出 image_0.png。
-        //   （实测该协议 NAI 原生接口 HTTP200 可正常出图。）
+        //   （实测走此协议 HTTP200 完美出图，手脚正常。）
         var url = naiEndpoint('generate-image');
         var scale = parseFloat(settings.naiScale) || 7;
         var steps = parseInt(settings.naiSteps, 10) || 23;
         var sampler = (settings.naiSampler || '').trim() || 'k_euler_ancestral';
-        // v5 全模型只支持 k_euler_ancestral（照抄 nai.ts 的限制）
+        // v5 全模型只支持 k_euler_ancestral
         if (model.indexOf('nai-diffusion-5') >= 0 && sampler !== 'k_euler_ancestral') sampler = 'k_euler_ancestral';
         var isV4 = /nai-diffusion-4/.test(model) || model.indexOf('nai-diffusion-5') >= 0;
         var params = {
@@ -10353,9 +10470,11 @@
         }
         var body = { input: positive, model: model, action: 'generate', parameters: params, use_new_shared_trial: true };
         logReq('【生图AI·NAI原生】请求·model=' + model, url, body, null, true);
-        var r = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+        // 生图最慢，给 5 分钟；成功=zip 二进制，失败=JSON 文本，分别处理
+        var fr = await fetchWithTimeout(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }, 300000, 'buffer');
+        var r = fr.res;
         if (!r.ok) {
-            var rt = await r.text();
+            var rt = ''; try { rt = new TextDecoder().decode(fr.payload); } catch (e3) {}
             var imsg = rt;
             try { var ej = JSON.parse(rt); if (ej.error && ej.error.message) imsg = ej.error.message; else if (ej.message) imsg = ej.message; } catch (e2) {}
             logReq('【生图AI·NAI原生】失败·HTTP ' + r.status + ' · ' + imsg, url, body, 'HTTP ' + r.status + ' ' + rt, false);
@@ -10365,7 +10484,7 @@
             if (r.status === 429) throw new Error('生图请求过于频繁（429），稍后再试');
             throw new Error('生图 HTTP ' + r.status + '：' + imsg);
         }
-        var buf = await r.arrayBuffer();
+        var buf = fr.payload;
         var dataUrl = unzipNaiImage(buf);
         logReq('【生图AI·NAI原生】返回·成功', url, null, { ok: true, seed: seed, size: size, wh: res.w + 'x' + res.h, model: model, positive: positive, negative: negative }, true);
         return { dataUrl: dataUrl, seed: seed };
@@ -10389,7 +10508,7 @@
         var c = findChar(name);
         return c ? (c.tag || '') : '';
     }
-    // ★ 照抄宝绘 EC()/CC()：把"当前可见"的角色档案渲染成【角色固定外貌库】文本，
+    // ★ 把"当前可见"的角色档案渲染成【角色固定外貌库】文本，
     //   注入文本 AI 规划 prompt，让它逐字抄进每个角色的 tag；全局条目 [locked] 不可改。
     var CHAR_FIELDS = [
         ['fandom', '同人身份tag'], ['sex', '性别'], ['hair', '头发'], ['eyes', '眼睛'],
@@ -10417,7 +10536,7 @@
         return head + lines.join('\n');
     }
 
-    /* ── 图夹进正文楼层（照抄宝绘 <bbi_image> 范式，改成 <naw_image>）──
+    /* ── 图夹进正文楼层（用自定义标签承载）──
        把 dataUrl 存 IndexedDB，正文 message.mes 末尾追加 <naw_image>id</naw_image>；
        注册两条正则：显示路径替换成空锚点（再由水合渲染成图），提示词路径替换成空串（永不外泄给 AI）。
        这样图就跟楼层绑在一起，切聊天/刷新都在，且不污染提示词。图库仍留一份备份。 */
@@ -10466,7 +10585,7 @@
 
     // ★ 关键（之前漏掉导致写进去了却看不见）：酒馆显示楼层读的是 message.mes，
     //   有 swipes 时还要同步当前 swipe。只写 swipes 不写 mes = 文件里有、屏幕上看不见。
-    //   宝绘 setMessageText 同款：mes 和 swipes[sid] 一起写。
+    //   mes 和 swipes[sid] 一起写。
     function setMessageText(msg, text) {
         if (!msg) return;
         msg.mes = text;
@@ -10474,7 +10593,7 @@
         if (sid >= 0 && sid < msg.swipes.length) msg.swipes[sid] = text;
     }
 
-    // ★ 照抄宝绘 injectImageTags：把多张图按"原始物理行号"插到对应正文段之后。
+    // ★ 把多张图按"原始物理行号"插到对应正文段之后。
     //   items = [{line: 物理行号, id: 图片id}]，同段多张按传入顺序排在该行之后。
     async function attachImagesByLines(floor, items) {
         var ctx = getCtx();
@@ -10590,7 +10709,7 @@
     }
 
     // 水合：扫描聊天 DOM 里的空锚点，把 IndexedDB 里的图渲染成卡片。
-    // ★★ 单一水合入口（照抄宝绘 rs() 的思路）：
+    // ★★ 单一水合入口：
     //    ① 只保留一套逻辑，绝不并行跑两套（上一版的无限循环/一段四图就是两套打架 + MutationObserver 递归导致）。
     //    ② 用楼层 DOM 的 mesid 精确取消息，不用"DOM 第几个 = chat 第几条"（虚拟滚动会错位）。
     //    ③ 正则把 <naw_image>id</naw_image> 换成 <div data-naw-slot>，slot 顺序 == id 顺序，按序对应。
@@ -10842,7 +10961,7 @@
     }
 
     // ★ 关键：把 tag/图写进正文后必须让酒馆重绘这一层楼，否则写进去了也看不见。
-    //   照抄宝绘 messageEdit.ts：saveChat 已在调用方做过，这里发 MESSAGE_EDITED + 局部重绘 + 兜底整段重载。
+    //   saveChat 已在调用方做过，这里发 MESSAGE_EDITED + 局部重绘 + 兜底整段重载。
     async function refreshFloor(floor) {
         var ctx = getCtx();
         if (!ctx) return;
@@ -10860,7 +10979,7 @@
         }
         try { if (ET.MESSAGE_UPDATED && ctx.eventSource && ctx.eventSource.emit) await ctx.eventSource.emit(ET.MESSAGE_UPDATED, floor); } catch (e) {}
         // 3) 图片锚点重新出现后水合（幂等，靠 data-naw-done 防重复）
-        //    ★ 多次重试：酒馆重绘有快有慢，锚点晚出现也能等到（宝绘渲染事件同款效果）
+        //    ★ 多次重试：酒馆重绘有快有慢，锚点晚出现也能等到
         [200, 600, 1400, 3000].forEach(function (ms) { setTimeout(hydrateImageSlots, ms); });
     }
 
@@ -10879,7 +10998,7 @@
         setGenButtons(true);
         progOpen('正在读正文、规划画面…', '第 1 步 / 共 3 步');
         try {
-            // ★ 照抄宝绘：正文切成 P1/P2/P3 段
+            // ★ 正文切成 P1/P2/P3 段
             var segs = prepareSegments(raw);
             if (!segs.length) { progClose(); toast('本楼正文清洗后没有可用段落'); return; }
             var count = Math.max(1, Math.min(9, parseInt(settings.count, 10) || 3));
@@ -10934,7 +11053,7 @@
             await writeOverlays(floor, plans, placeholders);
             // ★ 关键：写完正文后必须让酒馆重绘楼层，否则 tag/图写进去了也看不见
             await refreshFloor(floor);
-            // ★ 双保险：不重绘也直接按数据把图渲染进楼层（宝绘思路），彻底告别"写了看不见"
+            // ★ 双保险：不重绘也直接按数据把图渲染进楼层，彻底告别"写了看不见"
             [100, 500, 1200, 2500].forEach(function (ms) {
                 setTimeout(hydrateImageSlots, ms);
             });
@@ -11117,34 +11236,35 @@
     }
     function makeFabDraggable(fab) {
         var dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
-        fab.addEventListener('mousedown', function (e) {
-            if (e.button !== 0) return;
+        function start(cx, cy, e) {
             dragging = true; moved = false;
-            sx = e.clientX; sy = e.clientY;
+            sx = cx; sy = cy;
             var r = fab.getBoundingClientRect(); ox = r.left; oy = r.top;
             fab.style.right = 'auto'; fab.style.bottom = 'auto';
             fab.style.left = ox + 'px'; fab.style.top = oy + 'px';
             fab.classList.add('naw-fab-dragging');
-            e.preventDefault();
-        });
-        document.addEventListener('mousemove', function (e) {
+            if (e && e.cancelable) e.preventDefault();
+        }
+        function moveTo(cx, cy) {
             if (!dragging) return;
-            var dx = e.clientX - sx, dy = e.clientY - sy;
+            var dx = cx - sx, dy = cy - sy;
             if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
             var nx = Math.max(2, Math.min(ox + dx, window.innerWidth - fab.offsetWidth - 2));
             var ny = Math.max(2, Math.min(oy + dy, window.innerHeight - fab.offsetHeight - 2));
             fab.style.left = nx + 'px'; fab.style.top = ny + 'px';
-            // 小面板跟着球走：贴在球上方，水平尽量与球右缘对齐
             var mini = byId('naw-mini');
-            if (mini) {
-                var mw = mini.offsetWidth || 300;
+            if (mini && mini.classList.contains('on')) {
+                var mw = mini.offsetWidth || 300, mh = mini.offsetHeight || 200;
                 var ml = Math.max(2, Math.min(nx + fab.offsetWidth - mw, window.innerWidth - mw - 2));
+                var mt = ny + fab.offsetHeight + 8;                       // 优先球下方
+                if (mt + mh > window.innerHeight - 2) mt = ny - mh - 8;   // 放不下再往上
+                mt = Math.max(2, Math.min(mt, window.innerHeight - mh - 2));
                 mini.style.left = ml + 'px';
-                mini.style.top = Math.max(2, ny - mini.offsetHeight - 8) + 'px';
+                mini.style.top = mt + 'px';
                 mini.style.right = 'auto'; mini.style.bottom = 'auto';
             }
-        });
-        document.addEventListener('mouseup', function () {
+        }
+        function endDrag() {
             if (!dragging) return;
             dragging = false;
             fab.classList.remove('naw-fab-dragging');
@@ -11152,23 +11272,55 @@
                 settings.fabPos = { x: fab.offsetLeft, y: fab.offsetTop };
                 saveSettings();
             }
+        }
+        // 鼠标
+        fab.addEventListener('mousedown', function (e) {
+            if (e.button !== 0) return;
+            start(e.clientX, e.clientY, e);
         });
+        document.addEventListener('mousemove', function (e) { if (dragging) moveTo(e.clientX, e.clientY); });
+        document.addEventListener('mouseup', endDrag);
+        // 手指触摸（手机拖不上来的修复）
+        fab.addEventListener('touchstart', function (e) {
+            var t = e.touches && e.touches[0];
+            if (!t) return;
+            start(t.clientX, t.clientY, null);   // 不 preventDefault：保留点一下打开面板的 click
+        }, { passive: true });
+        document.addEventListener('touchmove', function (e) {
+            if (!dragging) return;
+            var t = e.touches && e.touches[0];
+            if (!t) return;
+            if (e.cancelable) e.preventDefault();
+            moveTo(t.clientX, t.clientY);
+        }, { passive: false });
+        document.addEventListener('touchend', endDrag);
+        document.addEventListener('touchcancel', endDrag);
         return function isMoved() { return moved; };
     }
 
     function bindShell(fab, mini, overlay, modal) {
         var fabMoved = makeFabDraggable(fab);
+        // 面板跟随球定位：优先弹到球下方，下方放不下再往上；左右贴球右缘、不溢出屏幕
+        function placeMiniByFab() {
+            var r = fab.getBoundingClientRect();
+            var mw = mini.offsetWidth, mh = mini.offsetHeight;
+            if (!mw) return;   // 还没显示出来，没有真实宽高
+            var ml = Math.max(2, Math.min(r.right - mw, window.innerWidth - mw - 2));
+            var mt = r.bottom + 8;
+            if (mt + mh > window.innerHeight - 2) mt = r.top - mh - 8;
+            mt = Math.max(2, Math.min(mt, window.innerHeight - mh - 2));
+            mini.style.left = ml + 'px';
+            mini.style.top = mt + 'px';
+            mini.style.right = 'auto'; mini.style.bottom = 'auto';
+        }
         fab.onclick = function () {
             if (fabMoved()) return;
-            // 面板跟随球位置（球可能被拖过）：贴球上方
-            if (settings.fabPos && mini.offsetWidth) {
-                var mw = mini.offsetWidth;
-                mini.style.left = Math.max(2, Math.min(settings.fabPos.x + fab.offsetWidth - mw, window.innerWidth - mw - 2)) + 'px';
-                mini.style.top = Math.max(2, settings.fabPos.y - mini.offsetHeight - 8) + 'px';
-                mini.style.right = 'auto'; mini.style.bottom = 'auto';
-            }
+            var turningOn = !mini.classList.contains('on');
             mini.classList.toggle('on');
-            if (mini.classList.contains('on')) renderMiniArtists();   // ★ 每次打开都刷新串列表（提示词页可能刚存/删过）
+            if (turningOn) {
+                placeMiniByFab();      // 显示后再定位（隐藏时宽度为 0 会跳过）
+                renderMiniArtists();   // ★ 每次打开都刷新串列表（提示词页可能刚存/删过）
+            }
         };
         byId('naw-open-detail').onclick = function () { overlay.classList.add('on'); mini.classList.remove('on'); };
         byId('naw-collapse').onclick = function () { overlay.classList.remove('on'); };
@@ -11606,12 +11758,72 @@
     function modalClose() { var m = byId('naw-modal'); if (m) m.classList.remove('on'); }
 
     /* ── 设置 tab（按主人要求重排）──
-       顺序：① 出图开关(追踪/发送方式/本楼层数量/破甲) → ② 出图模式 → ③ 配置方案 → ④ 接口与模型
-       主人原话：逐步发送/一次性发送放在出图模式上面；上面是配置，下面才是接口和模型。 */
+       实际顺序（见下方 order 数组）：配置迁移(最上) → 接口方案 → 接口与端点 → 当前模型
+                                    → 出图模式 → 出图开关 → 出图参数
+       注：逐步发送/一次性发送在「出图模式」区块内；接口与模型在上方，出图参数在最后。 */
+    /* ★ 配置迁移：导出=把全部设置打包成 json 下载；导入=读文件覆盖本机设置 */
+    function exportConfig() {
+        var payload = { __app: 'nai-art-workbench', __ver: 1, exportedAt: Date.now(), settings: {} };
+        Object.keys(DEFAULT_SETTINGS).forEach(function (k) {
+            if (k === '__runtimeLog' || k === '__migrated') return;   // 日志/迁移标记不带走
+            payload.settings[k] = settings[k];
+        });
+        try {
+            var text = JSON.stringify(payload, null, 2);
+            var blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            var d = new Date();
+            var stamp = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+            a.href = url; a.download = 'nai-art-workbench-config-' + stamp + '.json';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+            toast('配置已导出（含密钥，请妥善保管）');
+        } catch (e) { toast('导出失败：' + (e && e.message ? e.message : e)); }
+    }
+    function importConfig(file) {
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+            try {
+                var obj = JSON.parse(String(reader.result));
+                var src = obj && obj.settings ? obj.settings : obj;
+                if (!src || typeof src !== 'object' || Array.isArray(src)) throw new Error('文件格式不对');
+                var n = 0;
+                Object.keys(DEFAULT_SETTINGS).forEach(function (k) {
+                    if (k === '__runtimeLog' || k === '__migrated') return;
+                    if (src[k] !== undefined) { settings[k] = src[k]; n++; }
+                });
+                saveSettings();
+                renderSettings();
+                toast('已导入 ' + n + ' 项配置，重启酒馆或刷新后完全生效');
+            } catch (e) { toast('导入失败：' + (e && e.message ? e.message : '文件不是有效的配置')); }
+        };
+        reader.onerror = function () { toast('导入失败：读不了这个文件'); };
+        reader.readAsText(file, 'utf-8');
+    }
+
     function renderSettings() {
         var p = byId('naw-panel-settings');
         if (!p) return;
         p.innerHTML = '';
+
+        // ★ 配置迁移卡片（换设备用）：导出全部配置(含密钥) / 导入覆盖本机配置
+        var cMigHead = el('div', 'naw-subhead', '配置迁移');
+        cMigHead.id = 'naw-sec-migrate-head';
+        var cMig = el('div', 'naw-card');
+        cMig.id = 'naw-sec-migrate';
+        cMig.innerHTML = '<p class="naw-mini-desc" style="margin:0 0 10px">换设备用：电脑「导出配置」下载文件 → 手机「导入配置」选中文件，接口/密钥/模型/参数/画师串/角色库全部带走。导出的文件含真实密钥，请勿外传。</p>' +
+          '<div class="naw-row" style="align-items:center">' +
+            '<button class="naw-btn" id="naw-export-cfg">导出配置 ↓</button>' +
+            '<button class="naw-btn-ghost" id="naw-import-cfg">导入配置 ↑</button>' +
+            '<input type="file" id="naw-import-file" accept="application/json,.json" style="display:none">' +
+          '</div>';
+        p.appendChild(cMigHead);
+        p.appendChild(cMig);
+        byId('naw-export-cfg').onclick = exportConfig;
+        byId('naw-import-cfg').onclick = function () { byId('naw-import-file').click(); };
+        byId('naw-import-file').onchange = function () { importConfig(this.files && this.files[0]); this.value = ''; };
 
         // ★ 主人要的：顶部显眼的「当前模型」快捷切换，下拉选了立即生效
         var cModel = el('div', 'naw-card naw-model-quick');
@@ -11701,7 +11913,7 @@
         p.appendChild(c2);
 
         // ④ 接口与端点（放最后）：官方 / 第三方 两个预设点选即可，key 已存绝不覆盖
-        var apiHead = el('div', 'naw-subhead', '接口与端点' + help('官方 NAI / 第三方 NAI 两个选项：官方自动填好地址；第三方地址留空，由你自己填（不读宝绘、不预设任何地址）。密钥已存在本机，不进源码、不上传。'));
+        var apiHead = el('div', 'naw-subhead', '接口与端点' + help('官方 NAI / 第三方 NAI 两个选项：官方自动填好地址；第三方地址留空，由你自己填（不预设任何地址）。密钥已存在本机，不进源码、不上传。'));
         apiHead.id = 'naw-sec-api-head';
         p.appendChild(apiHead);
         var c4 = el('div', 'naw-card');
@@ -11774,10 +11986,10 @@
         byId('naw-scheme-save').onclick = saveScheme;
         renderSchemes();
 
-        // NAI 采样参数（照抄宝绘 plan：steps/scale/sampler/noise/cfg + 尺寸）
+        // NAI 采样参数（steps/scale/sampler/noise/cfg + 尺寸）
         var cSam = el('div', 'naw-card');
         cSam.id = 'naw-sec-sam';
-        cSam.innerHTML = '<h2>出图参数' + help('照抄宝绘方案的采样参数，真实随请求发送。默认与其「默认方案」一致。') + '</h2>' +
+        cSam.innerHTML = '<h2>出图参数' + help('采样参数，真实随请求发送。') + '</h2>' +
           '<div class="naw-row naw-align">' +
             '<div><label>Step</label><input type="number" id="naw-nai-steps" min="1" max="100" value="' + esc(settings.naiSteps) + '"></div>' +
             '<div><label>CFG</label><input type="number" id="naw-nai-scale" min="1" max="30" step="0.5" value="' + esc(settings.naiScale) + '"></div>' +
@@ -11802,9 +12014,10 @@
 
         // ★ 模型选择已挪到设置页顶部「当前模型」快捷卡，这里不再重复
 
-        // ★ 主人确认的顺序（最新）：接口方案 → 接口与端点 → 当前模型 → 出图模式 → 出图开关 → 出图参数
+        // ★ 主人确认的顺序（最新）：配置迁移 → 接口方案 → 接口与端点 → 当前模型 → 出图模式 → 出图开关 → 出图参数
         //   按 id 抓出各区块（含 subhead），再按目标顺序重新 append， appendChild 会把已存在节点移到末尾
-        var order = ['naw-sec-scheme-head', 'naw-sec-scheme',
+        var order = ['naw-sec-migrate-head', 'naw-sec-migrate',
+                     'naw-sec-scheme-head', 'naw-sec-scheme',
                      'naw-sec-api-head', 'naw-sec-api',
                      'naw-sec-model',
                      'naw-sec-mode-head', 'naw-sec-mode',
@@ -11990,7 +12203,7 @@
     }
     function saveScheme() {
         if (!Array.isArray(settings.schemes)) settings.schemes = [];
-        var name = prompt('给这套接口方案起个名字（如：小波 / 官方 / 16z）：', '方案 ' + (settings.schemes.length + 1));
+        var name = prompt('给这套接口方案起个名字（如：官方 / 中转A / 自建）：', '方案 ' + (settings.schemes.length + 1));
         if (!name || !name.trim()) return;
         var cfg = {};
         SCHEME_KEYS.forEach(function (k) { cfg[k] = clone(settings[k]); });
@@ -12104,7 +12317,7 @@
         ['CHARACTER_MESSAGE_RENDERED', 'MESSAGE_RECEIVED'].forEach(function (ev) {
             try { if (E[ev]) ctx.eventSource.on(E[ev], onNewMessage); } catch (e) {}
         });
-        // ★ 消息重绘事件：宝绘同款，楼层重画后立刻重新水合（这是之前漏掉的关键时机）
+        // ★ 消息重绘事件：楼层重画后立刻重新水合（这是之前漏掉的关键时机）
         ['MESSAGE_UPDATED', 'MESSAGE_EDITED'].forEach(function (ev) {
             try { if (E[ev]) ctx.eventSource.on(E[ev], function () { [100, 500, 1200].forEach(function (ms) { setTimeout(hydrateAll, ms); }); }); } catch (e) {}
         });
