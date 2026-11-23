@@ -5834,6 +5834,9 @@ body.mf-booting #top-bar {
   opacity: 1;
 }
 
+/* ═════════════════════════════════════════════════════════════════════════
+   ↓↓↓ 以下为「NAI 生图工作台」独立扩展（nai-art-workbench）样式 ↓↓↓
+   ═════════════════════════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════════════════════════
    NAI 生图工作台 · 样式（酒馆扩展版 v1.0.0）
    全局 RPG / 抽卡卡牌风：砖红只用于重点 · 暖白大面积 · 鎏金点睛
@@ -6206,11 +6209,15 @@ body.mf-booting #top-bar {
 #naw-progress.err .naw-prog-box h2{color:var(--naw-danger)}
 
 /* ===== 夹进正文楼层的生图卡片 ===== */
-.naw-chat-img{margin:8px 0;max-width:min(520px,100%);border:1px solid var(--naw-accent2);
+.naw-chat-img{margin:8px 0;width:100%;max-width:100%;border:1px solid var(--naw-accent2);
   border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(70,60,45,.12);background:#fff;
-  position:relative}
+  position:relative;box-sizing:border-box}
 /* ★ 主人要求：正文图上不放任何角标/按钮，按钮只在点开大图后出现 */
-.naw-chat-img img{display:block;width:100%;height:auto}
+/* ★ 主人 2026-11-24：横竖屏都等比铺满正文、绝不被压变形。
+   酒馆原生对正文 img 有 max-height 限制，会把「宽度拉满」的图压扁 →
+   这里用 !important 顶掉：宽度铺满、高度自动、不设高度上限、保持比例。 */
+.naw-chat-img img{display:block;width:100%!important;height:auto!important;
+  max-width:none!important;max-height:none!important;object-fit:contain}
 .naw-chat-regen{position:absolute;right:6px;bottom:6px;z-index:2;cursor:pointer;
   background:linear-gradient(135deg,var(--naw-gold),#8f6a25);color:#fff;border:1px solid rgba(255,255,255,.5);
   border-radius:6px;font-size:11px;font-weight:700;padding:4px 9px;box-shadow:0 1px 6px rgba(0,0,0,.25)}
@@ -6233,7 +6240,12 @@ body.mf-booting #top-bar {
 #naw-viewer.on{display:flex}
 .naw-viewer-box{position:relative;max-width:min(92vw,900px);max-height:92vh;overflow:auto;background:var(--naw-card);
   border:1px solid var(--naw-accent2);border-radius:var(--naw-radius);padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
-.naw-viewer-img{display:block;max-width:100%;max-height:74vh;object-fit:contain;border-radius:8px;margin:0 auto}
+.naw-viewer-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin:0 0 10px}
+.naw-viewer-navbtn{font-family:inherit;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer;
+  border:1px solid var(--naw-line);border-radius:6px;background:var(--naw-soft);color:var(--naw-ink2)}
+.naw-viewer-navbtn:hover{background:var(--naw-line);color:var(--naw-ink)}
+.naw-viewer-count{font-size:12px;color:var(--naw-ink2);font-variant-numeric:tabular-nums;min-width:74px;text-align:center}
+.naw-viewer-img{display:block;max-width:100%;max-height:70vh;object-fit:contain;border-radius:8px;margin:0 auto}
 .naw-viewer-noimg{padding:60px 30px;text-align:center;color:var(--naw-ink2);font-size:13px;min-width:320px}
 .naw-viewer-close{position:absolute;top:8px;right:10px;z-index:2;cursor:pointer;font-size:22px;line-height:1;
   background:transparent;border:0;color:var(--naw-ink2)}
@@ -6526,3 +6538,15 @@ body.mf-booting #top-bar {
   #naw-root{width:90vw;max-width:none;flex:none}
   #naw-root .naw-workbench{width:100%;max-width:none}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v3.20（2026-11-24）：注入模式 A/B 开关 + 正文标签过滤清单 + 画师串删除
+   ═══════════════════════════════════════════════════════════════════════════ */
+#naw-inject-trigger .naw-subhead{margin-bottom:6px}
+#naw-tfilter-box .naw-tf-item{display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;
+  font-size:11px;color:var(--naw-ink2,#666);cursor:pointer;padding:3px 8px;
+  border:1px solid var(--naw-line,#ddd);border-radius:12px;white-space:nowrap}
+#naw-tfilter-box .naw-tf-item:hover{border-color:var(--naw-gold,#b8860b)}
+#naw-tfilter-box .naw-tf-item input{margin:0;cursor:pointer}
+.naw-artist-chip-wrap{display:inline-flex;align-items:center;gap:2px}
+button.naw-artist-del:hover{color:var(--naw-accent,#a00)!important}
