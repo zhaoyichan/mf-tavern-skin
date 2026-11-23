@@ -2018,6 +2018,33 @@ body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !i
   color: var(--mf-accent-deep) !important;
 }
 
+/* ── 检查更新：展开式三选项框 ───────────────────────────────────── */
+#mf-tb-mgmt .mf-upd { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--mf-line); }
+#mf-tb-mgmt .mf-upd-toggle {
+  font: inherit; font-size: 11.5px; line-height: 1.4; padding: 4px 10px !important;
+  border-radius: 8px; border: 1px solid var(--mf-line2) !important;
+  background: var(--mf-accent-bg) !important; color: var(--mf-accent-deep) !important;
+  box-shadow: none !important; cursor: pointer; width: auto !important;
+}
+#mf-tb-mgmt .mf-upd-toggle:hover { background: var(--mf-paper) !important; }
+#mf-tb-mgmt .mf-upd-box {
+  margin-top: 8px; padding: 10px 11px; border-radius: 9px;
+  border: 1px solid var(--mf-line2); background: var(--mf-paper2);
+}
+#mf-tb-mgmt .mf-upd-t { font-size: 11px; color: var(--mf-ink2); margin-bottom: 7px; }
+#mf-tb-mgmt .mf-upd-opt {
+  display: flex; align-items: center; gap: 7px; font-size: 12px;
+  color: var(--mf-ink); padding: 4px 2px; cursor: pointer;
+}
+#mf-tb-mgmt .mf-upd-opt input { accent-color: var(--mf-accent, #8d8271); cursor: pointer; }
+#mf-tb-mgmt .mf-upd-go {
+  font: inherit; font-size: 11.5px; margin-top: 9px; padding: 5px 14px !important;
+  border-radius: 8px; border: 1px solid rgba(168,154,126,.45) !important;
+  background: var(--mf-accent-bg) !important; color: var(--mf-accent-deep) !important;
+  box-shadow: none !important; cursor: pointer; width: 100% !important;
+}
+#mf-tb-mgmt .mf-upd-go:hover { background: var(--mf-accent) !important; color: #fff !important; }
+
 /* ── 11.9 撤销条：贴在顶栏右侧空白处，不压正文 ────────────────────── */
 #mf-tb-toast {
   position: fixed;
@@ -5807,8 +5834,6 @@ body.mf-booting #top-bar {
   opacity: 1;
 }
 
-
-/* ===== 生图工作台模块 · 样式（合体并入）===== */
 /* ═══════════════════════════════════════════════════════════════════════════
    NAI 生图工作台 · 样式（酒馆扩展版 v1.0.0）
    全局 RPG / 抽卡卡牌风：砖红只用于重点 · 暖白大面积 · 鎏金点睛
@@ -5908,7 +5933,7 @@ body.mf-booting #top-bar {
 #naw-root details.naw-fold[open]{padding-bottom:11px}
 
 /* ===== 悬浮球：砖红双环（非金色），小号，可拖动 ===== */
-#naw-fab{position:fixed;right:14px;bottom:14px;width:30px;height:30px;border-radius:50%;
+#naw-fab{position:fixed;right:14px;top:38%;width:30px;height:30px;border-radius:50%;
   background:linear-gradient(135deg,var(--naw-accent2),var(--naw-accent));color:#fff;border:none;
   cursor:grab;user-select:none;
   box-shadow:0 0 0 2px rgba(166,62,47,.5),0 0 0 4px #fff,0 3px 10px rgba(70,50,40,.25);
@@ -6439,8 +6464,8 @@ body.mf-booting #top-bar {
   /* 输入控件防 iOS 缩放：字号 ≥16px */
   #naw-root input,#naw-root select,#naw-root textarea{font-size:16px}
   /* 小面板宽度自适应，不溢出 */
-  #naw-mini{width:calc(100vw - 32px);max-width:340px;right:16px;bottom:70px}
-  #naw-fab{right:14px;bottom:14px}
+  #naw-mini{width:calc(100vw - 32px);max-width:340px;right:16px;top:calc(38% + 40px)}
+  #naw-fab{right:14px;top:38%}
   /* 大图弹窗单列 */
   #naw-root .naw-modal-grid{grid-template-columns:1fr}
   #naw-root .naw-viewer-bar button{flex:1;min-width:44px}
