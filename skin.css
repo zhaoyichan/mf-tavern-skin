@@ -116,7 +116,13 @@
   --mf-accent:      #8d8271;   /* 暖灰褐 taupe（唯一强调色） */
   --mf-accent-deep: #6f6555;   /* 深强调：名字 / hover */
   --mf-accent-bg:   #efebe1;   /* 强调浅底：hover 背景 */
-  --mf-mark:        #b3a488;   /* 米金：用户消息细线 + 对话高亮 */
+  --mf-mark:        #b3a488;   /* 米金：用户消息细线 */
+  --mf-brown:       #b07c52;   /* 赭石：角色台词的虚线框（第 5 节） */
+  --mf-brown-bg:    #f7f0e3;   /* 台词虚线框的极淡米黄底 */
+  --mf-gold:        #b98a3e;   /* 鎏金：高级感台词样式的主色（第 5 节） */
+  --mf-gold2:       #d9b96c;   /* 亮金：渐变里的反光段 */
+  --mf-gold3:       #9a7434;   /* 暗金：渐变里的阴影段 */
+  --mf-red:         #8f2f26;   /* 朱砂红：金红搭配台词样式的强调色 */
 }
 
 
@@ -307,41 +313,358 @@ body   { background-image: none !important; }
 
 
 /* ─────────────────────────────────────────────────────────────────────────
-   5. 对话高亮（核心功能，靠酒馆自带的 q 标签，零正则零配置）
-      q 包的是含引号整段，引号字形下半截本来几乎是空的，
-      所以光条技术上覆盖到括号、视觉上看不出来（别人的主题也一样）。
+   5. 角色台词样式（v3.4.0，2026-11-24）—— 14 种可切换，默认「虚线框」
+      切换机制（index.js 那边负责，这里只管出样子）：
+        · index.js 把当前 key 存进 localStorage['mf_dlg_style']，
+          非默认样式时给 body 挂 mf-dlg-<key> 类。
+        · ★ body 上没有任何 mf-dlg-* 类 = 虚线框（默认值直接写在
+          .mes_text q 上，见下面 dash 段）—— 皮肤一加载就是虚线框，
+          不等 JS，启动零闪变。
+        · 下面每个非默认样式 = body.mf-dlg-<key> 前缀的一段规则，互不干扰。
+        · 长按顶栏 → 面板「对话框」一行 → 点 chip 立刻生效。
+
+      命中目标：酒馆 messageFormatting() 会把六种引号包成 <q>，
+      以 > 开头的引用变成 blockquote（见文件头第 84-89 行）——零正则零配置。
+
+      ★ 为什么用 display:inline-block（别改回 inline）
+        行内元素加边框 = 每一行各画一个框，长台词会碎成三四个小框；
+        inline-block 才是「整段台词 = 一个完整框」，跨行也不会断。
+        唯一例外是 mark（马克笔横条）：它本来就是「跟文字走」的，
+        必须用 inline 才会随换行断开——这是它自己的特性，不是 bug。
+
+      ★ 金色系 8 种：dash 虚线框 / mark 马克笔 / foil 烫金描边 /
+        rpg RPG双线框 / glass 微光琉璃 / glow 光晕羊皮纸 / corn 金饰角标 /
+        flow 鎏金流光（唯一会动的，9 秒一圈，尊重系统减动效设置）
+      ★ 金红搭配 6 种：r1 金框红晕 / r2 红金双线框 / r3 金框红章 /
+        r4 红金角标 / r5 虚线红金 / r6 红晕羊皮纸
+      ★ r2/r3/r5 用 q::before/::after 画内线、印章、红角——
+        浏览器给 q 自带的引号伪元素在第 5.0 节统一干掉了，
+        这些样式用更高优先级把 content 抢回来当装饰用，互不冲突。
    ───────────────────────────────────────────────────────────────────────── */
+
+/* 5.0 公共底座：所有样式共用 */
 .mes_text q::before,
 .mes_text q::after { content: none !important; }   /* 干掉浏览器自带的引号 */
 
 .mes_text q,
 .mes_text blockquote {
+  display: inline-block !important;
+  color: inherit !important;                        /* 字色不变 */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.mes_text blockquote p { display: inline !important; margin: 0 !important; }
+
+/* ── dash 虚线框（默认）：赭石虚线 + 极淡米黄底
+      ★ 故意不挂 body.mf-dlg-dash 前缀 —— 直接写在 .mes_text q 上当默认值。
+        这样 skin.css 一加载、正文一渲染就是虚线框，完全不用等 JS 挂类名，
+        从根上消灭「启动时先露出别的样式、过一会才变虚线」的闪变。
+        其它 13 种用 body.mf-dlg-<key>（优先级更高）压过这条默认值。 */
+.mes_text q,
+.mes_text blockquote {
+  border: 1px dashed var(--mf-brown, #b07c52) !important;
+  border-radius: 5px;
+  background-color: var(--mf-brown-bg, #f7f0e3) !important;
+  background-image: none !important;
+  background-repeat: no-repeat !important;
+  padding: 2px 8px !important;
+  margin: 0 2px !important;
+}
+
+/* ── mark 马克笔横条（旧样式）：必须 inline 才会随换行断开 ── */
+body.mf-dlg-mark .mes_text q,
+body.mf-dlg-mark .mes_text blockquote {
   display: inline !important;
-  color: inherit !important;                        /* 字色不变，只加底 */
-  border: none !important;                          /* blockquote 原生左边框去掉 */
+  border: none !important;
   background-color: transparent !important;
   background-image: linear-gradient(
     to bottom,
     transparent 55%,
-    rgba(179, 164, 136, 0.32) 55%,                  /* = --mf-mark 32% */
+    rgba(179, 164, 136, 0.32) 55%,
     rgba(179, 164, 136, 0.34) 84%,
     transparent 84%
   ) !important;
   background-repeat: no-repeat !important;
   padding: 0 2px !important;
   margin: 0 !important;
-  /* 让高亮在换行处正确断开，而不是糊成一整块 */
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
 }
-.mes_text blockquote { padding-left: 10px !important; }
-.mes_text blockquote p { display: inline !important; margin: 0 !important; }
+body.mf-dlg-mark .mes_text blockquote { padding-left: 2px !important; }
 
-/* 备选做法（想换味道时，把上面的 background-image 换掉）：
-   · 着重号：text-emphasis: filled dot; text-emphasis-position: under right;
-             注意：位置在旧内核上可能跑到字上方
-   · 渐隐线：linear-gradient(to right, rgba(179,164,136,.45), rgba(179,164,136,.08))
-             no-repeat left calc(100% - 2px) / 100% 1.5px; */
+/* ── foil 烫金描边：金渐变沿框一圈 + 暖纸底 + 柔光晕 ── */
+body.mf-dlg-foil .mes_text q,
+body.mf-dlg-foil .mes_text blockquote {
+  border: 1.5px solid transparent !important;
+  border-radius: 8px;
+  background:
+    linear-gradient(#faf3e2, #faf3e2) padding-box,
+    linear-gradient(135deg,
+      var(--mf-gold2, #d9b96c) 0%,
+      var(--mf-gold3, #9a7434) 30%,
+      #e8d194 55%,
+      var(--mf-gold, #b98a3e) 100%) border-box !important;
+  background-repeat: no-repeat !important;
+  box-shadow:
+    0 0 0 1px rgba(185, 138, 62, 0.18),
+    0 2px 10px rgba(185, 138, 62, 0.22),
+    inset 0 0 12px rgba(217, 185, 108, 0.14) !important;
+  padding: 3px 10px !important;
+  margin: 0 2px !important;
+}
+
+/* ── rpg RPG 双线框（金）：外金实线 + ::before 画内金细线 + 顶部一层淡光 ── */
+body.mf-dlg-rpg .mes_text q,
+body.mf-dlg-rpg .mes_text blockquote {
+  position: relative !important;
+  border: 1px solid var(--mf-gold, #b98a3e) !important;
+  border-radius: 3px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(217, 185, 108, 0.10), transparent 70%),
+    #f7efdc !important;
+  background-repeat: no-repeat !important;
+  padding: 5px 11px !important;
+  margin: 0 2px !important;
+}
+body.mf-dlg-rpg .mes_text q::before,
+body.mf-dlg-rpg .mes_text blockquote::before {
+  content: "" !important;                /* 把引号伪元素抢回来当内圈线用 */
+  position: absolute !important;
+  inset: 2px !important;
+  border: 1px solid rgba(185, 138, 62, 0.65) !important;
+  border-radius: 2px;
+  pointer-events: none !important;
+}
+
+/* ── glass 微光琉璃：磨砂玻璃 + 金细线 + 柔光晕 ── */
+body.mf-dlg-glass .mes_text q,
+body.mf-dlg-glass .mes_text blockquote {
+  border: 1px solid rgba(185, 138, 62, 0.45) !important;
+  border-radius: 10px;
+  background: rgba(255, 251, 240, 0.55) !important;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow:
+    0 2px 14px rgba(185, 138, 62, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 0 rgba(185, 138, 62, 0.15) !important;
+  padding: 3px 10px !important;
+  margin: 0 2px !important;
+}
+
+/* ── glow 光晕羊皮纸（金）：无边框，暖金光从字后透出来 ── */
+body.mf-dlg-glow .mes_text q,
+body.mf-dlg-glow .mes_text blockquote {
+  border: none !important;
+  border-radius: 8px;
+  background: radial-gradient(ellipse at 50% 45%,
+    rgba(233, 214, 168, 0.55) 0%,
+    rgba(233, 214, 168, 0.28) 45%,
+    transparent 78%) !important;
+  background-repeat: no-repeat !important;
+  box-shadow: 0 1px 8px rgba(217, 185, 108, 0.20) !important;
+  padding: 3px 12px !important;
+  margin: 0 2px !important;
+}
+
+/* ── corn 金饰角标：四角金色小括弧 + 极淡米底（JRPG 选中框） ── */
+body.mf-dlg-corn .mes_text q,
+body.mf-dlg-corn .mes_text blockquote {
+  border: none !important;
+  background:
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 top 0    / 12px 1.6px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 top 0    / 1.6px 12px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 top 0   / 12px 1.6px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 top 0   / 1.6px 12px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 bottom 0 / 12px 1.6px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 bottom 0 / 1.6px 12px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 bottom 0/ 12px 1.6px no-repeat,
+    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 bottom 0/ 1.6px 12px no-repeat,
+    #f7f1e2 !important;
+  padding: 5px 12px !important;
+  margin: 0 2px !important;
+}
+
+/* ── flow 鎏金流光：烫金描边的会动版，光在金边 9 秒转一圈 ──
+   先声明 border 兜底：个别老内核不认 @property 时，金渐变背景会整条失效，
+   但这圈金实线还在，不会出现「框整个消失」。 */
+@property --mf-fo-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes mf-fo-spin { to { --mf-fo-angle: 360deg; } }
+body.mf-dlg-flow .mes_text q,
+body.mf-dlg-flow .mes_text blockquote {
+  border: 1.5px solid var(--mf-gold, #b98a3e) !important;
+  border-radius: 8px;
+  background:
+    linear-gradient(#faf3e2, #faf3e2) padding-box,
+    conic-gradient(from var(--mf-fo-angle),
+      #c9a355 0%, #f0dca6 12%, #9a7434 28%, #e8d194 45%,
+      #b98a3e 62%, #f0dca6 80%, #c9a355 100%) border-box !important;
+  background-repeat: no-repeat !important;
+  box-shadow: 0 2px 10px rgba(185, 138, 62, 0.25) !important;
+  padding: 3px 10px !important;
+  margin: 0 2px !important;
+  animation: mf-fo-spin 9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mf-dlg-flow .mes_text q,
+  body.mf-dlg-flow .mes_text blockquote { animation: none !important; }
+}
+
+/* ── r1 金框红晕：烫金描边不变，字后的光换成深红淡晕 ── */
+body.mf-dlg-r1 .mes_text q,
+body.mf-dlg-r1 .mes_text blockquote {
+  border: 1.5px solid transparent !important;
+  border-radius: 8px;
+  background:
+    radial-gradient(ellipse at 50% 60%,
+      rgba(143, 47, 38, 0.13) 0%,
+      rgba(143, 47, 38, 0.05) 55%,
+      transparent 80%) padding-box,
+    linear-gradient(#faf1e0, #faf1e0) padding-box,
+    linear-gradient(135deg,
+      var(--mf-gold2, #d9b96c) 0%,
+      var(--mf-gold3, #9a7434) 30%,
+      #e8d194 55%,
+      var(--mf-gold, #b98a3e) 100%) border-box !important;
+  background-repeat: no-repeat !important;
+  box-shadow:
+    0 2px 10px rgba(143, 47, 38, 0.20),
+    inset 0 0 10px rgba(217, 185, 108, 0.12) !important;
+  padding: 3px 10px !important;
+  margin: 0 2px !important;
+}
+
+/* ── r2 红金双线框：外圈深红实线 + 内圈金细线（RPG 面板反转配色） ── */
+body.mf-dlg-r2 .mes_text q,
+body.mf-dlg-r2 .mes_text blockquote {
+  position: relative !important;
+  border: 1px solid var(--mf-red, #8f2f26) !important;
+  border-radius: 3px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(217, 185, 108, 0.10), transparent 70%),
+    #f7efdc !important;
+  background-repeat: no-repeat !important;
+  padding: 5px 11px !important;
+  margin: 0 2px !important;
+}
+body.mf-dlg-r2 .mes_text q::before,
+body.mf-dlg-r2 .mes_text blockquote::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 2px !important;
+  border: 1px solid rgba(185, 138, 62, 0.65) !important;
+  border-radius: 2px;
+  pointer-events: none !important;
+}
+
+/* ── r3 金框红章：烫金描边框 + 左端一枚深红小竖章（蜡封/印章感） ── */
+body.mf-dlg-r3 .mes_text q,
+body.mf-dlg-r3 .mes_text blockquote {
+  position: relative !important;
+  border: 1.5px solid transparent !important;
+  border-radius: 8px;
+  background:
+    linear-gradient(#faf3e2, #faf3e2) padding-box,
+    linear-gradient(135deg,
+      var(--mf-gold2, #d9b96c) 0%,
+      var(--mf-gold3, #9a7434) 30%,
+      #e8d194 55%,
+      var(--mf-gold, #b98a3e) 100%) border-box !important;
+  background-repeat: no-repeat !important;
+  box-shadow: 0 2px 10px rgba(185, 138, 62, 0.22) !important;
+  padding: 3px 10px 3px 18px !important;
+  margin: 0 2px 0 0 !important;
+}
+body.mf-dlg-r3 .mes_text q::before,
+body.mf-dlg-r3 .mes_text blockquote::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 6px !important;
+  top: 50% !important;
+  width: 5px !important;
+  height: 14px !important;
+  transform: translateY(-50%) !important;
+  border: none !important;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #a8402f, #7c241d) !important;
+  box-shadow: 0 0 4px rgba(143, 47, 38, 0.5) !important;
+  pointer-events: none !important;
+}
+
+/* ── r4 红金角标：四角深红括弧 + 一条金底线 ── */
+body.mf-dlg-r4 .mes_text q,
+body.mf-dlg-r4 .mes_text blockquote {
+  border: none !important;
+  background:
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 top 0    / 12px 1.8px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 top 0    / 1.8px 12px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 top 0   / 12px 1.8px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 top 0   / 1.8px 12px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 bottom 0 / 12px 1.8px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 bottom 0 / 1.8px 12px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 bottom 0/ 12px 1.8px no-repeat,
+    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 bottom 0/ 1.8px 12px no-repeat,
+    linear-gradient(to top, rgba(185, 138, 62, 0.38) 0 1.5px, transparent 1.5px) left 0 bottom 0 / 100% auto no-repeat,
+    #f8f2e2 !important;
+  padding: 6px 12px 8px !important;
+  margin: 0 2px !important;
+}
+
+/* ── r5 虚线红金：虚线框保持金色，左上/右下两个对角加一段深红实角 ── */
+body.mf-dlg-r5 .mes_text q,
+body.mf-dlg-r5 .mes_text blockquote {
+  position: relative !important;
+  border: 1px dashed var(--mf-gold, #b98a3e) !important;
+  border-radius: 5px;
+  background-color: #f9f2e2 !important;
+  background-image: none !important;
+  background-repeat: no-repeat !important;
+  padding: 3px 10px !important;
+  margin: 0 2px !important;
+}
+body.mf-dlg-r5 .mes_text q::before,
+body.mf-dlg-r5 .mes_text blockquote::before {
+  content: "" !important;
+  position: absolute !important;
+  left: -1px !important;
+  top: -1px !important;
+  width: 10px !important;
+  height: 10px !important;
+  border: none !important;
+  border-left: 2px solid var(--mf-red, #8f2f26) !important;
+  border-top: 2px solid var(--mf-red, #8f2f26) !important;
+  background: none !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+}
+body.mf-dlg-r5 .mes_text q::after,
+body.mf-dlg-r5 .mes_text blockquote::after {
+  content: "" !important;
+  position: absolute !important;
+  right: -1px !important;
+  bottom: -1px !important;
+  width: 10px !important;
+  height: 10px !important;
+  border: none !important;
+  border-right: 2px solid var(--mf-red, #8f2f26) !important;
+  border-bottom: 2px solid var(--mf-red, #8f2f26) !important;
+  background: none !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+}
+
+/* ── r6 红晕羊皮纸：无边框，深红的光从字后透出来（红比金显重） ── */
+body.mf-dlg-r6 .mes_text q,
+body.mf-dlg-r6 .mes_text blockquote {
+  border: none !important;
+  border-radius: 8px;
+  background: radial-gradient(ellipse at 50% 45%,
+    rgba(143, 47, 38, 0.16) 0%,
+    rgba(168, 64, 47, 0.10) 45%,
+    transparent 78%) !important;
+  background-repeat: no-repeat !important;
+  box-shadow: 0 1px 8px rgba(143, 47, 38, 0.22) !important;
+  padding: 3px 12px !important;
+  margin: 0 2px !important;
+}
 
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1912,6 +2235,41 @@ body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !i
   user-select: none;
 }
 #mf-tb-mgmt .mf-fs-v:hover { color: var(--mf-accent-deep); }
+
+/* 对话框样式切换 chips（v3.4.0）。和字号按钮同一套外观；
+   14 颗放不下就自动换行，当前选中的金色高亮。 */
+#mf-tb-mgmt .mf-dlg-chips {
+  margin-left: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+#mf-tb-mgmt .mf-dlg-chip {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 4px !important;
+  margin: 0 !important;
+  border-radius: 7px;
+  border: 1px solid var(--mf-line2) !important;
+  background: var(--mf-paper2) !important;
+  color: var(--mf-ink2) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#mf-tb-mgmt .mf-dlg-chip:hover { background: var(--mf-paper) !important; color: var(--mf-ink) !important; }
+#mf-tb-mgmt .mf-dlg-chip.on {
+  background: var(--mf-gold) !important;
+  border-color: var(--mf-gold3) !important;
+  color: #fff8ea !important;
+}
 
 #mf-tb-mgmt .mf-mg-row {
   display: flex;
