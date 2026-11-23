@@ -1954,6 +1954,25 @@
         /* v1.9.2 正文左右留白（百分比）。用户要「手机电脑都按比例」，
            所以存 %, 不存 px —— px 在 1280 上看不出、在 390 上又挤成一条。 */
         var KEY_PAD = 'mf_read_pad';
+        /* v3.4.0 角色台词样式切换。存 key，skin.css 按 body.mf-dlg-<key> 出样式。
+           14 种（前 8 个金色系，后 6 个金红搭配），默认 dash = 虚线框。 */
+        var KEY_DLG = 'mf_dlg_style';
+        var DLG_STYLES = [
+            { k: 'dash',  s: '虚',   t: '虚线框（默认）' },
+            { k: 'mark',  s: '条',   t: '马克笔横条（旧样式）' },
+            { k: 'foil',  s: '金',   t: '烫金描边' },
+            { k: 'rpg',   s: '双',   t: 'RPG 双线框（金）' },
+            { k: 'glass', s: '琉',   t: '微光琉璃' },
+            { k: 'glow',  s: '晕',   t: '光晕羊皮纸（金）' },
+            { k: 'corn',  s: '角',   t: '金饰角标' },
+            { k: 'flow',  s: '流',   t: '鎏金流光（金边有光在转）' },
+            { k: 'r1',    s: '红晕', t: '金框红晕' },
+            { k: 'r2',    s: '红双', t: '红金双线框' },
+            { k: 'r3',    s: '红章', t: '金框红章（左侧红印章）' },
+            { k: 'r4',    s: '红角', t: '红金角标' },
+            { k: 'r5',    s: '红虚', t: '虚线红金（虚线框加红角）' },
+            { k: 'r6',    s: '红光', t: '红晕羊皮纸' }
+        ];
 
         /* 名称：第三方扩展的抽屉没登记，就退回它自己的 title */
         var NAMES = {
@@ -2128,6 +2147,42 @@
             applyPad();
         }
 
+        /* ── 角色台词样式切换（v3.4.0）───────────────────────────────
+           皮肤 CSS 按 body.mf-dlg-<key> 出 14 种台词样式（skin.css 第 5 节）。
+           点面板 chip → wr(KEY_DLG, key) → applyDlg(true) 换 body 类，立刻生效。
+           ★ 和 applyFs/applyPad 同一条铁律：apply() 挂在 MutationObserver 上，
+             值没变就零副作用 —— 绝不反复碰 body.class（碰一次整页选择器重算）。 */
+        var _dlgCur = null;
+        function dlgVal() {
+            var v = rd(KEY_DLG);
+            for (var i = 0; i < DLG_STYLES.length; i++) {
+                if (DLG_STYLES[i].k === v) return v;
+            }
+            return 'dash';   /* 没存过 / 存的 key 不认识 → 默认虚线框 */
+        }
+        function applyDlg(force) {
+            var v = dlgVal();
+            if (!force && _dlgCur === v) return;
+            _dlgCur = v;
+            for (var i = 0; i < DLG_STYLES.length; i++) {
+                var c = 'mf-dlg-' + DLG_STYLES[i].k;
+                if (document.body.classList.contains(c)) document.body.classList.remove(c);
+            }
+            /* dash（虚线框）= skin.css 里写死的默认值，不挂类。
+               也就是「body 上没有任何 mf-dlg-* 类 = 虚线框」。
+               这样就算 applyDlg 还没跑到，正文也已经是虚线框 ——
+               启动时不会再先露出别的样式再变过来（v3.4.0 闪变修复）。 */
+            if (v !== 'dash') document.body.classList.add('mf-dlg-' + v);
+            /* 面板 chips 的高亮也要跟上（没开面板就跳过） */
+            if (panel) {
+                var chips = panel.querySelectorAll('.mf-dlg-chip');
+                [].forEach.call(chips, function (ch) {
+                    var on = ch.getAttribute('data-dlg') === v;
+                    if (ch.classList.contains('on') !== on) ch.classList.toggle('on', on);
+                });
+            }
+        }
+
         function rows() {
             if (!holder) return [];
             return [].filter.call(holder.children, function (el) {
@@ -2230,6 +2285,7 @@
 
             applyFs();
             applyPad();
+            applyDlg();
             syncExt();
         }
 
@@ -2397,6 +2453,17 @@
                 '<span class="mf-fs-v mf-pad-v" data-a="pad0" title="点击恢复默认 3.5%"></span>' +
                 '<button type="button" data-a="pad+" title="正文离两边远一点">+</button>' +
                 '</div></div>' +
+                /* v3.4.0 对话框样式：14 颗小 chip，点一下立刻生效（不用刷新）。
+                   外观和字号/留白同一套按钮，当前选中的金色高亮。
+                   金色系 8 个 + 金红搭配 6 个，默认「虚」。 */
+                '<div class="mf-mg-sec">' +
+                '<span class="mf-mg-sec-t">对话框</span>' +
+                '<div class="mf-dlg-chips">' +
+                DLG_STYLES.map(function (d) {
+                    return '<button type="button" class="mf-dlg-chip" data-dlg="' + d.k +
+                        '" title="' + d.t + '">' + d.s + '</button>';
+                }).join('') +
+                '</div></div>' +
                 '<div class="mf-upd" id="mf-upd">' +
                 '<button type="button" class="mf-upd-toggle" data-a="update">检查更新 ↻</button>' +
                 '<div class="mf-upd-box" id="mf-upd-box" style="display:none">' +
@@ -2421,6 +2488,13 @@
                     wr(KEY_HID, JSON.stringify(Object.keys(hidden)));
                     apply();
                     buildList();
+                    return;
+                }
+                /* v3.4.0 对话框 chip：点一下换台词样式，立刻生效 */
+                var chip = e.target.closest('.mf-dlg-chip');
+                if (chip) {
+                    var dk = chip.getAttribute('data-dlg');
+                    if (dk) { wr(KEY_DLG, dk); applyDlg(true); }
                     return;
                 }
                 var b = e.target.closest('button[data-a], .mf-fs-v');
@@ -2464,6 +2538,8 @@
                 } else if (a === 'reset') {
                     hidden = {};
                     wr(KEY_HID, '[]');
+                    wr(KEY_DLG, 'dash');
+                    applyDlg(true);
                     apply();
                     buildList();
                 } else if (a === 'native') {
