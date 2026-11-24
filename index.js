@@ -134,6 +134,63 @@
 
     var head = document.head || document.getElementsByTagName('head')[0];
 
+    /* ═════════════════════════════════════════════════════════════════════
+       模块 0 · 台词样式「留空 + 单一注入」(v3.7.0, 2026-11-24)
+       ★ 主人定的思路（原话）：CSS 里台词那块原本就要是留空的，选了什么样式
+         就把那一套填进去；没选就填默认的；换样式先把旧的删掉再填新的——
+         "一个地方不能出现两种代码"。
+       ★ 实现：skin.css / user.css 第 5 节已整段删空（一条台词规则都不留）。
+         这里读存档（mf_dlg_style / mf_ink_color_v2），把选中样式 + 选中字色
+         拼成唯一一份 CSS，写进单个 <style id="mf-dialogue-css">。
+         切换 = textContent 整体替换（删旧+填新一次完成），任何时刻 DOM 里
+         只有一份台词样式代码——不再是"默认一份 + 覆盖一份"双重渲染。
+       ★ 代价（主人已认可）：重启第一帧台词是裸文字，脚本一加载就立刻注入，
+         只跳这一下；比之前双重渲染干净得多。
+       ★ CSS 变量(--mf-gold/--mf-ink-red 等)取自 skin.css 的 :root，
+         注入的规则照常引用，无需重复定义。
+       ★ 字色规则放在最后：它和公共底座的 color:inherit !important 同优先级，
+         后写者胜，红/棕/绿能压过底座；黑字用空串，靠底座 inherit 生效。
+       ═════════════════════════════════════════════════════════════════════ */
+    var DLG_BASE_CSS = "/* 5.0 公共底座：所有样式共用 */\n.mes_text q::before,\n.mes_text q::after { content: none !important; }   /* 干掉浏览器自带的引号 */\n\n.mes_text q,\n.mes_text blockquote {\n  display: inline-block !important;\n  color: inherit !important;                        /* 字色不变 */\n  box-decoration-break: clone;\n  -webkit-box-decoration-break: clone;\n}";
+    var DLG_STYLE_CSS = {
+        "dash": "/* ── dash 虚线框（默认）：赭石虚线 + 极淡米黄底\n      ★ 故意不挂 前缀 —— 直接写在 .mes_text q 上当默认值。\n        这样 skin.css 一加载、正文一渲染就是虚线框，完全不用等 JS 挂类名，\n        从根上消灭「启动时先露出别的样式、过一会才变虚线」的闪变。\n        其它 13 种用 body.mf-dlg-<key>（优先级更高）压过这条默认值。 */\n.mes_text q,\n.mes_text blockquote {\n  border: 1px dashed var(--mf-brown, #b07c52) !important;\n  border-radius: 5px;\n  background-color: var(--mf-brown-bg, #f7f0e3) !important;\n  background-image: none !important;\n  background-repeat: no-repeat !important;\n  padding: 2px 8px !important;\n  margin: 0 2px !important;\n}",
+        "mark": "/* ── mark 马克笔横条（旧样式）：必须 inline 才会随换行断开 ── */\n.mes_text q,\n.mes_text blockquote {\n  display: inline !important;\n  border: none !important;\n  background-color: transparent !important;\n  background-image: linear-gradient(\n    to bottom,\n    transparent 55%,\n    rgba(179, 164, 136, 0.32) 55%,\n    rgba(179, 164, 136, 0.34) 84%,\n    transparent 84%\n  ) !important;\n  background-repeat: no-repeat !important;\n  padding: 0 2px !important;\n  margin: 0 !important;\n}\n.mes_text blockquote { padding-left: 2px !important; }",
+        "foil": "/* ── foil 烫金描边：金渐变沿框一圈 + 暖纸底 + 柔光晕 ── */\n.mes_text q,\n.mes_text blockquote {\n  border: 1.5px solid transparent !important;\n  border-radius: 8px;\n  background:\n    linear-gradient(#faf3e2, #faf3e2) padding-box,\n    linear-gradient(135deg,\n      var(--mf-gold2, #d9b96c) 0%,\n      var(--mf-gold3, #9a7434) 30%,\n      #e8d194 55%,\n      var(--mf-gold, #b98a3e) 100%) border-box !important;\n  background-repeat: no-repeat !important;\n  box-shadow:\n    0 0 0 1px rgba(185, 138, 62, 0.18),\n    0 2px 10px rgba(185, 138, 62, 0.22),\n    inset 0 0 12px rgba(217, 185, 108, 0.14) !important;\n  padding: 3px 10px !important;\n  margin: 0 2px !important;\n}",
+        "rpg": "/* ── rpg RPG 双线框（金）：外金实线 + ::before 画内金细线 + 顶部一层淡光 ── */\n.mes_text q,\n.mes_text blockquote {\n  position: relative !important;\n  border: 1px solid var(--mf-gold, #b98a3e) !important;\n  border-radius: 3px;\n  background:\n    radial-gradient(ellipse at 50% 0%, rgba(217, 185, 108, 0.10), transparent 70%),\n    #f7efdc !important;\n  background-repeat: no-repeat !important;\n  padding: 5px 11px !important;\n  margin: 0 2px !important;\n}\n.mes_text q::before,\n.mes_text blockquote::before {\n  content: \"\" !important;                /* 把引号伪元素抢回来当内圈线用 */\n  position: absolute !important;\n  inset: 2px !important;\n  border: 1px solid rgba(185, 138, 62, 0.65) !important;\n  border-radius: 2px;\n  pointer-events: none !important;\n}",
+        "glass": "/* ── glass 微光琉璃：磨砂玻璃 + 金细线 + 柔光晕 ── */\n.mes_text q,\n.mes_text blockquote {\n  border: 1px solid rgba(185, 138, 62, 0.45) !important;\n  border-radius: 10px;\n  background: rgba(255, 251, 240, 0.55) !important;\n  -webkit-backdrop-filter: blur(6px);\n  backdrop-filter: blur(6px);\n  box-shadow:\n    0 2px 14px rgba(185, 138, 62, 0.18),\n    inset 0 1px 0 rgba(255, 255, 255, 0.65),\n    inset 0 -1px 0 rgba(185, 138, 62, 0.15) !important;\n  padding: 3px 10px !important;\n  margin: 0 2px !important;\n}",
+        "glow": "/* ── glow 光晕羊皮纸（金）：无边框，暖金光从字后透出来 ── */\n.mes_text q,\n.mes_text blockquote {\n  border: none !important;\n  border-radius: 8px;\n  background: radial-gradient(ellipse at 50% 45%,\n    rgba(233, 214, 168, 0.55) 0%,\n    rgba(233, 214, 168, 0.28) 45%,\n    transparent 78%) !important;\n  background-repeat: no-repeat !important;\n  box-shadow: 0 1px 8px rgba(217, 185, 108, 0.20) !important;\n  padding: 3px 12px !important;\n  margin: 0 2px !important;\n}",
+        "corn": "/* ── corn 金饰角标：四角金色小括弧 + 极淡米底（JRPG 选中框） ── */\n.mes_text q,\n.mes_text blockquote {\n  border: none !important;\n  background:\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 top 0    / 12px 1.6px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 top 0    / 1.6px 12px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 top 0   / 12px 1.6px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 top 0   / 1.6px 12px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 bottom 0 / 12px 1.6px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) left 0 bottom 0 / 1.6px 12px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 bottom 0/ 12px 1.6px no-repeat,\n    linear-gradient(var(--mf-gold, #b98a3e), var(--mf-gold, #b98a3e)) right 0 bottom 0/ 1.6px 12px no-repeat,\n    #f7f1e2 !important;\n  padding: 5px 12px !important;\n  margin: 0 2px !important;\n}",
+        "flow": "/* ── flow 鎏金流光：烫金描边的会动版，光在金边 9 秒转一圈 ──\n   先声明 border 兜底：个别老内核不认 @property 时，金渐变背景会整条失效，\n   但这圈金实线还在，不会出现「框整个消失」。 */\n@property --mf-fo-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }\n@keyframes mf-fo-spin { to { --mf-fo-angle: 360deg; } }\n.mes_text q,\n.mes_text blockquote {\n  border: 1.5px solid var(--mf-gold, #b98a3e) !important;\n  border-radius: 8px;\n  background:\n    linear-gradient(#faf3e2, #faf3e2) padding-box,\n    conic-gradient(from var(--mf-fo-angle),\n      #c9a355 0%, #f0dca6 12%, #9a7434 28%, #e8d194 45%,\n      #b98a3e 62%, #f0dca6 80%, #c9a355 100%) border-box !important;\n  background-repeat: no-repeat !important;\n  box-shadow: 0 2px 10px rgba(185, 138, 62, 0.25) !important;\n  padding: 3px 10px !important;\n  margin: 0 2px !important;\n  animation: mf-fo-spin 9s linear infinite;\n}\n@media (prefers-reduced-motion: reduce) {\n  .mes_text q,\n  .mes_text blockquote { animation: none !important; }\n}",
+        "r1": "/* ── r1 金框红晕：烫金描边不变，字后的光换成深红淡晕 ── */\n.mes_text q,\n.mes_text blockquote {\n  border: 1.5px solid transparent !important;\n  border-radius: 8px;\n  background:\n    radial-gradient(ellipse at 50% 60%,\n      rgba(143, 47, 38, 0.13) 0%,\n      rgba(143, 47, 38, 0.05) 55%,\n      transparent 80%) padding-box,\n    linear-gradient(#faf1e0, #faf1e0) padding-box,\n    linear-gradient(135deg,\n      var(--mf-gold2, #d9b96c) 0%,\n      var(--mf-gold3, #9a7434) 30%,\n      #e8d194 55%,\n      var(--mf-gold, #b98a3e) 100%) border-box !important;\n  background-repeat: no-repeat !important;\n  box-shadow:\n    0 2px 10px rgba(143, 47, 38, 0.20),\n    inset 0 0 10px rgba(217, 185, 108, 0.12) !important;\n  padding: 3px 10px !important;\n  margin: 0 2px !important;\n}",
+        "r2": "/* ── r2 红金双线框：外圈深红实线 + 内圈金细线（RPG 面板反转配色） ── */\n.mes_text q,\n.mes_text blockquote {\n  position: relative !important;\n  border: 1px solid var(--mf-red, #8f2f26) !important;\n  border-radius: 3px;\n  background:\n    radial-gradient(ellipse at 50% 0%, rgba(217, 185, 108, 0.10), transparent 70%),\n    #f7efdc !important;\n  background-repeat: no-repeat !important;\n  padding: 5px 11px !important;\n  margin: 0 2px !important;\n}\n.mes_text q::before,\n.mes_text blockquote::before {\n  content: \"\" !important;\n  position: absolute !important;\n  inset: 2px !important;\n  border: 1px solid rgba(185, 138, 62, 0.65) !important;\n  border-radius: 2px;\n  pointer-events: none !important;\n}",
+        "r3": "/* ── r3 金框红章：烫金描边框 + 左端一枚深红小竖章（蜡封/印章感） ── */\n.mes_text q,\n.mes_text blockquote {\n  position: relative !important;\n  border: 1.5px solid transparent !important;\n  border-radius: 8px;\n  background:\n    linear-gradient(#faf3e2, #faf3e2) padding-box,\n    linear-gradient(135deg,\n      var(--mf-gold2, #d9b96c) 0%,\n      var(--mf-gold3, #9a7434) 30%,\n      #e8d194 55%,\n      var(--mf-gold, #b98a3e) 100%) border-box !important;\n  background-repeat: no-repeat !important;\n  box-shadow: 0 2px 10px rgba(185, 138, 62, 0.22) !important;\n  padding: 3px 10px 3px 18px !important;\n  margin: 0 2px 0 0 !important;\n}\n.mes_text q::before,\n.mes_text blockquote::before {\n  content: \"\" !important;\n  position: absolute !important;\n  left: 6px !important;\n  top: 50% !important;\n  width: 5px !important;\n  height: 14px !important;\n  transform: translateY(-50%) !important;\n  border: none !important;\n  border-radius: 2px;\n  background: linear-gradient(180deg, #a8402f, #7c241d) !important;\n  box-shadow: 0 0 4px rgba(143, 47, 38, 0.5) !important;\n  pointer-events: none !important;\n}",
+        "r4": "/* ── r4 红金角标：四角深红括弧 + 一条金底线 ── */\n.mes_text q,\n.mes_text blockquote {\n  border: none !important;\n  background:\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 top 0    / 12px 1.8px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 top 0    / 1.8px 12px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 top 0   / 12px 1.8px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 top 0   / 1.8px 12px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 bottom 0 / 12px 1.8px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) left 0 bottom 0 / 1.8px 12px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 bottom 0/ 12px 1.8px no-repeat,\n    linear-gradient(var(--mf-red, #8f2f26), var(--mf-red, #8f2f26)) right 0 bottom 0/ 1.8px 12px no-repeat,\n    linear-gradient(to top, rgba(185, 138, 62, 0.38) 0 1.5px, transparent 1.5px) left 0 bottom 0 / 100% auto no-repeat,\n    #f8f2e2 !important;\n  padding: 6px 12px 8px !important;\n  margin: 0 2px !important;\n}",
+        "r5": "/* ── r5 虚线红金：虚线框保持金色，左上/右下两个对角加一段深红实角 ── */\n.mes_text q,\n.mes_text blockquote {\n  position: relative !important;\n  border: 1px dashed var(--mf-gold, #b98a3e) !important;\n  border-radius: 5px;\n  background-color: #f9f2e2 !important;\n  background-image: none !important;\n  background-repeat: no-repeat !important;\n  padding: 3px 10px !important;\n  margin: 0 2px !important;\n}\n.mes_text q::before,\n.mes_text blockquote::before {\n  content: \"\" !important;\n  position: absolute !important;\n  left: -1px !important;\n  top: -1px !important;\n  width: 10px !important;\n  height: 10px !important;\n  border: none !important;\n  border-left: 2px solid var(--mf-red, #8f2f26) !important;\n  border-top: 2px solid var(--mf-red, #8f2f26) !important;\n  background: none !important;\n  box-shadow: none !important;\n  pointer-events: none !important;\n}\n.mes_text q::after,\n.mes_text blockquote::after {\n  content: \"\" !important;\n  position: absolute !important;\n  right: -1px !important;\n  bottom: -1px !important;\n  width: 10px !important;\n  height: 10px !important;\n  border: none !important;\n  border-right: 2px solid var(--mf-red, #8f2f26) !important;\n  border-bottom: 2px solid var(--mf-red, #8f2f26) !important;\n  background: none !important;\n  box-shadow: none !important;\n  pointer-events: none !important;\n}",
+        "r6": "/* ── r6 红晕羊皮纸：无边框，深红的光从字后透出来（红比金显重） ── */\n.mes_text q,\n.mes_text blockquote {\n  border: none !important;\n  border-radius: 8px;\n  background: radial-gradient(ellipse at 50% 45%,\n    rgba(143, 47, 38, 0.16) 0%,\n    rgba(168, 64, 47, 0.10) 45%,\n    transparent 78%) !important;\n  background-repeat: no-repeat !important;\n  box-shadow: 0 1px 8px rgba(143, 47, 38, 0.22) !important;\n  padding: 3px 12px !important;\n  margin: 0 2px !important;\n}",
+    };
+    var DLG_INK_CSS = {
+        "black": "",
+        "red": ".mes_text q,\n.mes_text blockquote {\n  color: var(--mf-ink-red) !important;\n}",
+        "brown": ".mes_text q,\n.mes_text blockquote {\n  color: var(--mf-ink-brown) !important;\n}",
+        "green": ".mes_text q,\n.mes_text blockquote {\n  color: var(--mf-ink-green) !important;\n}",
+    };
+    var DLG_CSS_ID = 'mf-dialogue-css';
+    var _dlgLastCss = null;
+    function storeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function injectDialogueCss(dlgOverride, inkOverride) {
+        var d = dlgOverride || storeGet('mf_dlg_style');
+        var i = inkOverride || storeGet('mf_ink_color_v2');
+        if (!Object.prototype.hasOwnProperty.call(DLG_STYLE_CSS, d)) d = 'dash';
+        if (!Object.prototype.hasOwnProperty.call(DLG_INK_CSS, i)) i = 'black';
+        var css = DLG_BASE_CSS + '\n' + DLG_STYLE_CSS[d] + '\n' + DLG_INK_CSS[i];
+        if (css === _dlgLastCss) return;              /* 值没变零副作用(此函数挂在高频 observer 上) */
+        var el = byId(DLG_CSS_ID);
+        if (!el) { el = document.createElement('style'); el.id = DLG_CSS_ID; head.appendChild(el); }
+        el.textContent = css;                        /* 整体替换：删旧+填新一次完成，DOM 里只有一份 */
+        _dlgLastCss = css;
+    }
+    injectDialogueCss();
+
     function byId(id) { return document.getElementById(id); }
 
     function svg(paths, vb) {
@@ -1957,6 +2014,17 @@
         /* v3.4.0 角色台词样式切换。存 key，skin.css 按 body.mf-dlg-<key> 出样式。
            14 种（前 8 个金色系，后 6 个金红搭配），默认 dash = 虚线框。 */
         var KEY_DLG = 'mf_dlg_style';
+        /* v3.6.0 台词字色：和样式完全独立。存 key，skin.css 按 body.mf-ink-<key> 出字色。
+           black = 默认黑字 = CSS 天然样子，不挂类（零跳变）。 */
+        /* ★ v3.6.1：换键名让旧存档（主人之前选的 red）自然失效 → 回到默认黑字。
+           这样不用去碰浏览器 localStorage 里的旧值，也不影响以后随时再切彩色。 */
+        var KEY_INK = 'mf_ink_color_v2';
+        var INK_COLORS = [
+            { k: 'black', s: '黑', t: '默认黑字' },
+            { k: 'red',   s: '红', t: '深红字' },
+            { k: 'brown', s: '棕', t: '深棕字' },
+            { k: 'green', s: '绿', t: '墨绿字' }
+        ];
         var DLG_STYLES = [
             { k: 'dash',  s: '虚',   t: '虚线框（默认）' },
             { k: 'mark',  s: '条',   t: '马克笔横条（旧样式）' },
@@ -2147,11 +2215,13 @@
             applyPad();
         }
 
-        /* ── 角色台词样式切换（v3.4.0）───────────────────────────────
-           皮肤 CSS 按 body.mf-dlg-<key> 出 14 种台词样式（skin.css 第 5 节）。
-           点面板 chip → wr(KEY_DLG, key) → applyDlg(true) 换 body 类，立刻生效。
-           ★ 和 applyFs/applyPad 同一条铁律：apply() 挂在 MutationObserver 上，
-             值没变就零副作用 —— 绝不反复碰 body.class（碰一次整页选择器重算）。 */
+        /* ── 角色台词样式切换（v3.7.0 改为单一注入）─────────────────
+           ★ 样式/字色都不再挂 body 类。改由模块 0 的 injectDialogueCss()
+             读两个存档 key，把「当前样式 + 当前字色」拼成唯一一份 CSS，
+             写进单个 #mf-dialogue-css 标签（整体替换，DOM 里只有一份）。
+           点面板 chip → wr(key, val) → applyDlg/applyInk → injectDialogueCss()。
+           ★ apply() 挂在 MutationObserver 上：值没变就零副作用 ——
+             这里用 _dlgCur/_inkCur 去重，注入器内部再用 _dlgLastCss 去重。 */
         var _dlgCur = null;
         function dlgVal() {
             var v = rd(KEY_DLG);
@@ -2164,20 +2234,38 @@
             var v = dlgVal();
             if (!force && _dlgCur === v) return;
             _dlgCur = v;
-            for (var i = 0; i < DLG_STYLES.length; i++) {
-                var c = 'mf-dlg-' + DLG_STYLES[i].k;
-                if (document.body.classList.contains(c)) document.body.classList.remove(c);
-            }
-            /* dash（虚线框）= skin.css 里写死的默认值，不挂类。
-               也就是「body 上没有任何 mf-dlg-* 类 = 虚线框」。
-               这样就算 applyDlg 还没跑到，正文也已经是虚线框 ——
-               启动时不会再先露出别的样式再变过来（v3.4.0 闪变修复）。 */
-            if (v !== 'dash') document.body.classList.add('mf-dlg-' + v);
+            injectDialogueCss(v, inkVal());   /* 样式+字色一起传，整体替换那唯一一份 CSS */
             /* 面板 chips 的高亮也要跟上（没开面板就跳过） */
             if (panel) {
                 var chips = panel.querySelectorAll('.mf-dlg-chip');
                 [].forEach.call(chips, function (ch) {
                     var on = ch.getAttribute('data-dlg') === v;
+                    if (ch.classList.contains('on') !== on) ch.classList.toggle('on', on);
+                });
+            }
+        }
+
+        /* ── 台词字色（v3.7.0）：和样式并列，但共享同一个注入标签 ────
+           ★ 同样走 injectDialogueCss()，和样式拼成同一份 CSS。
+             值没变就零副作用，MutationObserver 高频调用也不反复写 DOM。 */
+        var _inkCur = null;
+        function inkVal() {
+            var v = rd(KEY_INK);
+            for (var i = 0; i < INK_COLORS.length; i++) {
+                if (INK_COLORS[i].k === v) return v;
+            }
+            return 'black';   /* 没存过 / 不认识 → 默认黑字 */
+        }
+        function applyInk(force) {
+            var v = inkVal();
+            if (!force && _inkCur === v) return;
+            _inkCur = v;
+            injectDialogueCss(dlgVal(), v);   /* 样式+字色一起传，和样式共用那一个 <style> 标签 */
+            /* 面板字色 chip 高亮同步（没开面板就跳过） */
+            if (panel) {
+                var chips = panel.querySelectorAll('.mf-ink-chip');
+                [].forEach.call(chips, function (ch) {
+                    var on = ch.getAttribute('data-ink') === v;
                     if (ch.classList.contains('on') !== on) ch.classList.toggle('on', on);
                 });
             }
@@ -2286,6 +2374,7 @@
             applyFs();
             applyPad();
             applyDlg();
+            applyInk();
             syncExt();
         }
 
@@ -2464,15 +2553,19 @@
                         '" title="' + d.t + '">' + d.s + '</button>';
                 }).join('') +
                 '</div></div>' +
+                /* v3.6.0 台词字色：和样式独立的一行 4 颗 chip，默认「黑」。
+                   只染台词（q/blockquote）里的字，旁白不变。 */
+                '<div class="mf-mg-sec">' +
+                '<span class="mf-mg-sec-t">字色</span>' +
+                '<div class="mf-dlg-chips">' +
+                INK_COLORS.map(function (c) {
+                    return '<button type="button" class="mf-dlg-chip mf-ink-chip" data-ink="' + c.k +
+                        '" title="' + c.t + '">' + c.s + '</button>';
+                }).join('') +
+                '</div></div>' +
                 '<div class="mf-upd" id="mf-upd">' +
                 '<button type="button" class="mf-upd-toggle" data-a="update">检查更新 ↻</button>' +
-                '<div class="mf-upd-box" id="mf-upd-box" style="display:none">' +
-                  '<div class="mf-upd-t">选择要更新的部分</div>' +
-                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="both" checked><span>两个都更新（主题 + 生图）</span></label>' +
-                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="skin"><span>只更新主题</span></label>' +
-                  '<label class="mf-upd-opt"><input type="radio" name="mf-upd-scope" value="art"><span>只更新生图</span></label>' +
-                  '<button type="button" class="mf-upd-go" data-a="update-go">开始更新</button>' +
-                '</div></div>' +
+                '</div>' +
                 '<div class="mf-mg-foot"><span class="mf-grow"></span>' +
                 '<button type="button" data-a="reset">全部恢复</button>' +
                 '<button type="button" data-a="native">还原原生顶栏</button>' +
@@ -2493,6 +2586,8 @@
                 /* v3.4.0 对话框 chip：点一下换台词样式，立刻生效 */
                 var chip = e.target.closest('.mf-dlg-chip');
                 if (chip) {
+                    var ik = chip.getAttribute('data-ink');
+                    if (ik) { wr(KEY_INK, ik); applyInk(true); return; }
                     var dk = chip.getAttribute('data-dlg');
                     if (dk) { wr(KEY_DLG, dk); applyDlg(true); }
                     return;
@@ -2501,45 +2596,16 @@
                 if (!b) return;
                 var a = b.getAttribute('data-a') || 'fs0';
                 if (a === 'update') {
-                    // 展开/收起更新选项框
-                    var box = byId('mf-upd-box');
-                    if (box) box.style.display = (box.style.display === 'none') ? 'block' : 'none';
-                } else if (a === 'update-go') {
-                    // 三个选项：both=主题+生图，skin=只主题，art=只生图（默认 both）
-                    if (typeof updateExtension !== 'function') {
-                        notice('当前酒馆不支持自动更新，请手动重装扩展', { ms: 5000 });
-                        return;
-                    }
-                    var picked = panel.querySelector('input[name="mf-upd-scope"]:checked');
-                    var scope = picked ? picked.value : 'both';
-                    var targets = [];
-                    if (scope === 'both' || scope === 'skin') targets.push({ id: 'mf-tavern-skin', name: '主题' });
-                    if (scope === 'both' || scope === 'art') targets.push({ id: 'nai-art-workbench', name: '生图' });
-                    var label = targets.map(function (t) { return t.name; }).join(' + ');
-                    notice('正在更新 ' + label + '…', { ms: 3000 });
-                    var okCount = 0, doneCount = 0;
-                    targets.forEach(function (t) {
-                        try {
-                            var p = updateExtension(t.id);
-                            if (p && typeof p.then === 'function') {
-                                p.then(function (resp) {
-                                    if (resp && resp.ok) okCount++;
-                                    if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
-                                }).catch(function () {
-                                    if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
-                                });
-                            } else {
-                                if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
-                            }
-                        } catch (err) {
-                            if (++doneCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
-                        }
-                    });
-                } else if (a === 'reset') {
+                    /* v3.8.0：两道确认。第一步只打开信息弹窗（读线上版本 + 仓库
+                       CHANGELOG.json）；在弹窗里点「更新」才调 runUpdate() 真正更新。 */
+                    openUpdateModal();
+                } else if (a === 'reset') {                } else if (a === 'reset') {
                     hidden = {};
                     wr(KEY_HID, '[]');
                     wr(KEY_DLG, 'dash');
+                    wr(KEY_INK, 'black');
                     applyDlg(true);
+                    applyInk(true);
                     apply();
                     buildList();
                 } else if (a === 'native') {
@@ -2609,10 +2675,167 @@
             buildList();
             applyFs();      /* 面板可能是刚建的，数值要补一次 */
             applyPad();
+            applyInk();
             position();
             panel.classList.add('on');
         }
         function closePanel() { if (panel) panel.classList.remove('on'); }
+
+
+        /* ── v3.8.0 更新信息弹窗（两道确认）──────────────────────────
+           点「检查更新」→ 读线上 manifest 版本 + 仓库根目录 CHANGELOG.json
+           → 弹窗显示「当前版本 → 线上版本」对比 + 更新内容 + 范围选项
+           → 弹窗里点「更新」才调 runUpdate() 走 /api/extensions/update。
+           ★ 更新执行只有 runUpdate() 一份，主面板与弹窗共用，绝不写两份。
+           ★ 内容文件用 raw.githubusercontent 读，跟版本对比同源；读不到用内联兜底。
+           ★ 样式全内联，不依赖 skin.css，避免两份 CSS 同步问题。 */
+        var MF_VERSION = '3.8.0';
+        var MF_CHANGELOG_URL = 'https://raw.githubusercontent.com/zhaoyichan/mf-tavern-skin/main/CHANGELOG.json';
+        var MF_REPO_MANIFEST = 'https://raw.githubusercontent.com/zhaoyichan/mf-tavern-skin/main/manifest.json';
+        var MF_FALLBACK_LOG = [
+            { version: '3.7.1', changes: ['修复检查更新，改用酒馆原生更新接口', '台词样式改为单一注入，去掉双重渲染'] }
+        ];
+        var mfUpdModal = null;
+
+        function mfupdEsc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+            });
+        }
+
+        function closeUpdateModal() {
+            if (mfUpdModal && mfUpdModal.parentNode) mfUpdModal.parentNode.removeChild(mfUpdModal);
+            mfUpdModal = null;
+        }
+
+        function renderUpdateModal(localVer, remoteVer, logItems) {
+            closeUpdateModal();
+            var verHtml = (remoteVer && localVer && remoteVer !== localVer)
+                ? '<div style="font-size:13px;margin:12px 0;padding:9px 11px;background:rgba(140,125,100,.10);border-radius:6px;">' +
+                    '当前 <b>' + mfupdEsc(localVer) + '</b> <span style="color:#8d8271;margin:0 8px;">→</span> 线上 <b>' + mfupdEsc(remoteVer) + '</b></div>'
+                : '<div style="font-size:13px;margin:12px 0;color:#6b6155;">当前版本 <b>' + mfupdEsc(localVer || '未知') + '</b>' +
+                    (remoteVer ? ' · 已是最新' : ' · 无法读取线上版本') + '</div>';
+            var bodyHtml = (logItems && logItems.length)
+                ? logItems.slice(0, 8).map(function (v) {
+                    var li = (v.changes || []).map(function (c) {
+                        return '<li style="margin:3px 0;line-height:1.55;">' + mfupdEsc(c) + '</li>';
+                    }).join('');
+                    return '<div style="margin-bottom:12px;">' +
+                        '<div style="font-size:13px;font-weight:600;color:#7a5c3a;">' + mfupdEsc(v.version || '') +
+                        (v.date ? ' <span style="font-size:11px;color:#9a9081;font-weight:400;">' + mfupdEsc(v.date) + '</span>' : '') +
+                        '</div><ul style="margin:5px 0 0;padding-left:18px;font-size:12px;color:#4a4137;">' + li + '</ul></div>';
+                }).join('')
+                : '<div style="font-size:12px;color:#6b6155;">暂无更新说明，请到仓库查看。</div>';
+
+            var wrap = document.createElement('div');
+            wrap.className = 'mfupd-mask';
+            wrap.setAttribute('style', 'position:fixed;inset:0;z-index:999999;background:rgba(30,25,20,.42);' +
+                'display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;');
+            wrap.innerHTML =
+                '<div class="mfupd-card" style="background:#faf7f0;border:1px solid #b08a5a;border-radius:10px;' +
+                  'max-width:540px;width:100%;max-height:82vh;overflow:auto;padding:20px 22px;' +
+                  'font-family:inherit;color:#3a3128;box-shadow:0 8px 30px rgba(0,0,0,.25);">' +
+                  '<div style="font-size:15px;font-weight:600;margin-bottom:2px;">检查更新</div>' +
+                  verHtml +
+                  '<div style="font-size:12px;color:#6b6155;margin:14px 0 6px;">这次更新了什么</div>' +
+                  '<div style="border-top:1px solid #e3d9c8;padding-top:8px;">' + bodyHtml + '</div>' +
+                  '<div style="border-top:1px solid #e3d9c8;padding-top:12px;margin-top:6px;">' +
+                    '<label style="display:flex;align-items:center;gap:7px;font-size:13px;margin:6px 0;cursor:pointer;">' +
+                      '<input type="radio" name="mfupd-scope" value="both" checked style="accent-color:#8d8271;">' +
+                      '<span>两个都更新（主题 + 生图）</span></label>' +
+                    '<label style="display:flex;align-items:center;gap:7px;font-size:13px;margin:6px 0;cursor:pointer;">' +
+                      '<input type="radio" name="mfupd-scope" value="art" style="accent-color:#8d8271;">' +
+                      '<span>只更新生图</span></label>' +
+                  '</div>' +
+                  '<div style="display:flex;justify-content:flex-end;gap:9px;margin-top:16px;">' +
+                    '<button type="button" data-a="mfupd-cancel" style="padding:7px 18px;border:1px solid #c9bda8;' +
+                      'background:transparent;border-radius:6px;color:#5a5146;cursor:pointer;">取消</button>' +
+                    '<button type="button" data-a="mfupd-go" style="padding:7px 20px;border:1px solid #8d8271;' +
+                      'background:#8d8271;color:#fff;border-radius:6px;cursor:pointer;">更新</button>' +
+                  '</div>' +
+                '</div>';
+            wrap.addEventListener('click', function (ev) {
+                if (ev.target === wrap) { closeUpdateModal(); return; }
+                var b = ev.target.closest('button[data-a]');
+                if (!b) return;
+                var act = b.getAttribute('data-a');
+                if (act === 'mfupd-cancel') { closeUpdateModal(); return; }
+                if (act === 'mfupd-go') {
+                    var picked = wrap.querySelector('input[name="mfupd-scope"]:checked');
+                    var scope = picked ? picked.value : 'both';
+                    closeUpdateModal();
+                    runUpdate(scope);
+                }
+            });
+            document.body.appendChild(wrap);
+            mfUpdModal = wrap;
+        }
+
+        function openUpdateModal() {
+            /* 先出「读取中」弹窗，不白等；读到内容后整体替换 */
+            closeUpdateModal();
+            var wait = document.createElement('div');
+            wait.className = 'mfupd-mask';
+            wait.setAttribute('style', 'position:fixed;inset:0;z-index:999999;background:rgba(30,25,20,.42);' +
+                'display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;');
+            wait.innerHTML = '<div style="background:#faf7f0;border:1px solid #b08a5a;border-radius:10px;' +
+                'padding:24px 30px;font-size:13px;color:#6b6155;">正在读取更新信息…</div>';
+            document.body.appendChild(wait);
+            mfUpdModal = wait;
+
+            var remoteVer = '', logItems = null;
+            Promise.all([
+                fetch(MF_REPO_MANIFEST + '?t=' + Date.now(), { cache: 'no-cache' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (m) { remoteVer = (m && m.version) || ''; }).catch(function () { }),
+                fetch(MF_CHANGELOG_URL + '?t=' + Date.now(), { cache: 'no-cache' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (d) { logItems = (d && d.versions) || null; }).catch(function () { })
+            ]).then(function () {
+                if (!logItems) logItems = MF_FALLBACK_LOG;
+                renderUpdateModal(MF_VERSION, remoteVer, logItems);
+            });
+        }
+
+        /* 真正执行更新（唯一一份）。scope: both | art */
+        function runUpdate(scope) {
+            var targets = [];
+            if (scope === 'both') targets.push({ id: 'mf-tavern-skin', name: '主题' });
+            if (scope === 'both' || scope === 'art') targets.push({ id: 'nai-art-workbench', name: '生图' });
+            var label = targets.map(function (t) { return t.name; }).join(' + ');
+            var hd = {};
+            try {
+                var c = window.SillyTavern && typeof window.SillyTavern.getContext === 'function'
+                    ? window.SillyTavern.getContext() : null;
+                if (c && typeof c.getRequestHeaders === 'function') hd = c.getRequestHeaders();
+            } catch (e) { }
+            notice('正在更新 ' + label + '…', { ms: 3000 });
+            var okCount = 0, doneCount = 0, lastErr = '';
+            targets.forEach(function (t) {
+                var done = function (ok) {
+                    if (ok) okCount++;
+                    if (++doneCount === targets.length) {
+                        if (okCount === targets.length) finishUpdate(okCount, targets.length, label, notice);
+                        else notice('更新失败（' + okCount + '/' + targets.length + '）：' +
+                            (lastErr || '请检查网络或重装扩展'), { ms: 6000, wide: true });
+                    }
+                };
+                fetch('/api/extensions/update', {
+                    method: 'POST', headers: hd,
+                    body: JSON.stringify({ extensionName: t.id, global: true })
+                }).then(function (resp) {
+                    if (resp.ok) return done(true);
+                    return resp.text().then(function (txt) {
+                        lastErr = (txt || ('HTTP ' + resp.status)).slice(0, 120);
+                        done(false);
+                    });
+                }).catch(function (err) {
+                    lastErr = String(err && err.message || err).slice(0, 120);
+                    done(false);
+                });
+            });
+        }
+
 
         /* ── 顶部提示条（撤销 / 说明共用一条）─────────────────────────
            v1.7.0 改造：原来只认「已隐藏 X ＋ 撤销」这一种。可「还原原生」之后
@@ -10989,7 +11212,19 @@
             //   仅在「重新生成」（给了 replaceId）时存档；「另出一张」不动旧图。
             if (replaceId) await archiveOldImage(replaceId, tag, size, meta.meta || {});
             var r = await callNaiImage(tag, size);          // ★ 直接生图，不碰文本 AI
-            putImage(newId, r.dataUrl, function () {});
+            /* ★ v3.0.1 修复「图库有图、正文没图」：
+               原来 putImage 的回调是空的，图只落进 IndexedDB，正文那边只靠
+               下面原地替换 [data-naw-box] —— 一旦酒馆重绘把占位刷掉、或
+               hydrate 还没来得及建占位，这里替换 0 个元素，图就只躺在图库。
+               现在落盘成功后强制阶梯重扫正文：hydrateImageSlots 会从正文的
+               <naw_image>id</naw_image> 读到 id，再从 IndexedDB 取到刚存的图补画。
+               阶梯多次是防「重绘发生在补画之后又把图冲掉」。 */
+            putImage(newId, r.dataUrl, function (ok) {
+                if (!ok) return;
+                [0, 200, 600, 1400].forEach(function (ms) {
+                    setTimeout(hydrateImageSlots, ms);
+                });
+            });
             // 写图库元数据（新 id 用原图的 tag/size/position/角色）
             var base = meta.meta || {};
             settings.galleryMeta.unshift({
@@ -11224,11 +11459,17 @@
          ★ 幂等：跑过一次后正文里已无 <naw_tag>，再跑无副作用，不会重复出图。
        ★ 下一轮不喂 AI：naw_tag/role 在提示词路径由正则抹掉（见 ensureImageTagRegex）；
          naw_image/naw_plan 本来就有提示词隐藏正则。 */
-    async function captureInjectTags(floor) {
+    async function captureInjectTags(floor, manual, forceButton) {
         var ctx = getCtx(), ch = chatArray(), msg = ch[floor];
-        if (!msg) return 0;
+        /* ★ v3.0.2：forceButton=true 表示「只把 tag 转成按钮、绝不出图」——演示专用，不烧额度。
+           ★ v3.0.1：manual=true 表示用户主动点的（工作台抓取）；自动路径不传，保持静默。
+           原来没抓到就静默 return 0，用户点了没反应还以为坏了 —— 现在只给手动明确提示。 */
+        if (!msg) { if (manual) toast('抓不到：这一楼读不到正文'); return 0; }
         var raw = messageText(msg);
-        if (raw.indexOf('<naw_tag') < 0) return 0;   // 没有 tag → 啥也不做（幂等）
+        if (raw.indexOf('<naw_tag') < 0) {
+            if (manual) toast('这一楼正文里没有 <naw_tag> 画面标签——检查注入指令是否已开启、AI 这条回复有没有写标签');
+            return 0;   // 没有 tag → 啥也不做（幂等）
+        }
         var lines = raw.split(/\r\n|\n|\r/);
         var plans = [], m;
         var tagRe = /<naw_tag\b([^>]*)>([\s\S]*?)<\/naw_tag>/gi;
@@ -11279,10 +11520,14 @@
         await refreshFloor(floor);
 
         // ③ 触发方式：button=只出按钮；auto=逐张直出生图 AI（不碰文本 AI）
-        if (settings.injectTrigger === 'auto') {
+        //    ★ forceButton（演示）强制只出按钮，忽略 auto 设置，绝不烧额度
+        if (settings.injectTrigger === 'auto' && !forceButton) {
             for (var k = 0; k < plans.length; k++) {
                 await generateForImage(plans[k].id, null, plans[k].id);
             }
+            if (manual) toast('已抓到 ' + plans.length + ' 个画面标签，正在自动出图');
+        } else if (manual) {
+            toast('已抓到 ' + plans.length + ' 个画面标签，正文已插好「生成这张图」按钮');
         }
         return plans.length;
     }
@@ -11633,7 +11878,8 @@
         byId('naw-floor-next').onclick = function () { if (curFloor < lastAiIndex()) { curFloor++; renderFloor(); } };
         byId('naw-mini-gen').onclick = function () {
             // ★ 注入模式：抓正文 tag 直出（button 触发方式下点这里也按已抓的 tag 出图）
-            if (settings.mode === 'inject') { captureInjectTags(curFloor); return; }
+            //   v3.0.1：手动传 true → 抓到/没抓到都给明确提示，不再默默无反应
+            if (settings.mode === 'inject') { captureInjectTags(curFloor, true); return; }
             runGenerate({ floor: curFloor });
         };
 
@@ -12518,18 +12764,27 @@
         if (floor < 0) { toast('没有可写入的正文楼层'); return; }
         if (btn) { btn.disabled = true; btn.textContent = '写入正文…'; }
         try {
-            // 每条 tag 造一个 plan（position 用段号占位，演示不关心精确定位）
-            var plans = tags.map(function (t, i) {
-                return { position: 'P' + (i + 1), line: i, tag: t, size: size, id: '' };
-            });
-            ensureImageTagRegex();
-            await writePlansToMessage(floor, plans);   // 写入 <naw_plan> + <naw_tagview> 并落盘
-            await refreshFloor(floor);                  // ★ 让酒馆重绘这一楼，tag 角标立刻可见
-            var html = '<div class="naw-demo-ok">已把 ' + plans.length + ' 条 tag 写进当前正文楼层（P' + (floor + 1) +
-                       '），请翻到那条正文看金色「画面 tag」角标。<br>这几条 tag 下一轮不会发给 AI（只在提示词路径隐藏）。</div>';
-            html += plans.map(function (p) { return '<div class="naw-demo-item"><div class="naw-mini-desc">' + esc(p.tag) + '</div></div>'; }).join('');
+            var ctx = getCtx();
+            var msg = chatArray()[floor];
+            if (!ctx || !msg) throw new Error('读不到当前楼层');
+            // ★ v3.0.2 关键修复：真正在正文写 <naw_tag>（抓取函数认这个），
+            //   而不是只写隐藏的 <naw_plan> —— 旧版就栽在这：写完啥也看不见。
+            var cur = messageText(msg);
+            var tagBlock = tags.map(function (t) {
+                return '<naw_tag size="' + (size === 'landscape' ? 'landscape' : 'portrait') + '">' +
+                    String(t).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</naw_tag>';
+            }).join('\n');
+            setMessageText(msg, cur.replace(/\s+$/, '') + '\n\n' + tagBlock);
+            try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); } catch (e) {}
+            // 走和真实注入完全相同的抓取链路 → <naw_tag> 原位变 <naw_image> 占位 → 渲染「＋生成这张图」按钮
+            // forceButton=true：演示绝不烧额度（忽略 auto 设置）
+            var got = await captureInjectTags(floor, false, true);
+            if (!got) throw new Error('tag 写入后抓取不到，请检查正文是否被正则隐藏');
+            var html = '<div class="naw-demo-ok">已把 ' + got + ' 条 tag 写进当前正文楼层（P' + (floor + 1) +
+                       '），正文原位已出现「＋生成这张图」按钮，点它才出图（演示本身不烧额度）。<br>这几条 tag 下一轮不会发给 AI（提示词路径已隐藏）。</div>';
+            html += tags.map(function (t) { return '<div class="naw-demo-item"><div class="naw-mini-desc">' + esc(t) + '</div></div>'; }).join('');
             if (resultBox) resultBox.innerHTML = html;
-            toast('已写入正文 ' + plans.length + ' 条 tag');
+            toast('已写入正文 ' + got + ' 条 tag，正文出现生成按钮');
         } catch (e) {
             if (resultBox) resultBox.innerHTML = '<div class="naw-demo-err">写入失败：' + esc(e && e.message ? e.message : String(e)) + '</div>';
             toast('写入正文失败：' + (e && e.message ? e.message : String(e)));
@@ -12543,7 +12798,7 @@
         var p = byId('naw-panel-log');
         if (!p) return;
         var c = byId('naw-cnt-log'); if (c) c.textContent = reqLog.length;
-        var demoCard = '<div class="naw-subhead">tag 注入正文演示' + help('验证 tag 能不能写进正文、能不能看见。下面已从当前正文自动填入 tag（可改），点「把 tag 写进正文」——直接写进当前楼层并立刻显示成金色角标；不调生图、不调文本 AI、不烧任何额度。这些 tag 下一轮不会发给 AI。') + '</div>' +
+        var demoCard = '<div class="naw-subhead">tag 注入正文演示' + help('验证 tag 能不能写进正文、能不能看见。下面已从当前正文自动填入 tag（可改），点「把 tag 写进正文」——写进当前楼层后正文原位立刻出现「＋生成这张图」按钮；点那个按钮才真正出图。演示本身不调生图、不调文本 AI、不烧任何额度。这些 tag 下一轮不会发给 AI。') + '</div>' +
           '<div class="naw-card" style="margin-bottom:12px">' +
             '<label>要写进正文的 tag（每行一条；已从当前正文自动填入）</label>' +
             '<textarea id="naw-demo-tags" rows="4" style="width:100%;box-sizing:border-box;resize:vertical">' + esc(demoTagFromCurrent()) + '</textarea>' +
