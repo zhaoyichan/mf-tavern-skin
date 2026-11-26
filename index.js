@@ -11868,6 +11868,8 @@
             mini.classList.toggle('on');
             if (turningOn) {
                 placeMiniByFab();      // 显示后再定位（隐藏时宽度为 0 会跳过）
+                // ★ 每次打开都定位到最新 AI 楼层，绕开 curFloor 卡在旧楼层的问题；仍可用 ◀/▶ 手动翻
+                curFloor = lastAiIndex(); renderFloor();
                 renderMiniArtists();   // ★ 每次打开都刷新串列表（提示词页可能刚存/删过）
             }
         };
