@@ -356,10 +356,11 @@
              否则首屏和完整皮肤的配色会不一样（首屏偏一下再跳）。
                同步检查脚本：tools/check_boot_sync.js            */
         var MF_SKIN_BOOT = [
-            ':root{--mf-bg:#f4f2ec;--mf-paper:#fbf9f4;--mf-ink:#45413a;--mf-ink2:#79746a;--mf-ink3:#a9a49a;',
-            '--mf-line:#e7e2d7;--mf-line2:#d9d3c5;--mf-accent:#8d8271;--mf-accent-deep:#6f6555;--mf-accent-bg:#efebe1;',
-            '--mf-mark:#b3a488;--mf-paper2:#f7f4ed;--mf-ok:#7d8a6f;--mf-hl:rgba(179,164,136,.34);',
-            '--mf-hl-cur:rgba(179,164,136,.62);--mf-danger:#a05a50}',
+            /* ★ v3.9.0 朱印·宣：下列 --mf-* 值必须与 skin.css 的 :root 逐字一致 */
+            ':root{--mf-bg:#fdf9f3;--mf-paper:#fffdf9;--mf-ink:#3b302b;--mf-ink2:#938379;--mf-ink3:#b3a69a;',
+            '--mf-line:#ece0d5;--mf-line2:#ddcfbe;--mf-accent:#a83232;--mf-accent-deep:#8a2626;--mf-accent-bg:#faf0ec;',
+            '--mf-mark:#c06b62;--mf-paper2:#f7f1e8;--mf-ok:#7d8a6f;--mf-hl:rgba(168,50,50,.26);',
+            '--mf-hl-cur:rgba(168,50,50,.52);--mf-danger:#a83232}',
             ':root{--SmartThemeBodyColor:var(--mf-ink)!important;--SmartThemeEmColor:var(--mf-ink2)!important;',
             '--SmartThemeQuoteColor:var(--mf-accent-deep)!important;--SmartThemeUnderlineColor:var(--mf-mark)!important;',
             '--SmartThemeBlurTintColor:var(--mf-bg)!important;--SmartThemeChatTintColor:var(--mf-bg)!important;',
@@ -374,7 +375,7 @@
             '#chat{max-width:none!important}',
             '#form_sheld{max-width:none!important}',
             '.mes_text{font-family:inherit!important}',
-            '#top-bar{background-color:rgba(244,242,236,.92)!important;box-shadow:none!important;border-bottom:1px solid var(--mf-line)!important}'
+            '#top-bar{background-color:rgba(253,249,243,.92)!important;box-shadow:none!important;border-bottom:1px solid var(--mf-line)!important}'
         ].join('');
 
         /* 把骨架装进 ST 主题槽位（走官方保存路径 → 落盘 → 下次冷启动首帧生效） */
@@ -2082,6 +2083,33 @@
         };
         var TG_ICO = '<path d="M5.5 4.5h13"/><path d="M8 16l4-4.5 4 4.5"/>';
 
+        /* ★ v3.9.1 首屏工具栏预置（外观 + 图标全提前）
+           骨架装进主题槽位、冷启动首帧就生效，比扩展 JS 早得多。这里把工具栏的
+           胶囊外观和 9 颗线条图标用纯 CSS 画进骨架，第一帧就是最终模样，
+           不再"先原生、后你的"。
+           · 图标 path 直接复用下面的 ICO，保证和 JS 注入的真 SVG 逐笔一致。
+           · 全部规则挂 body:not(.mf-tb-ready)：顶栏模块 apply() 一接管就加上
+             mf-tb-ready，预置整体退役，skin.css 第11节 + 真 SVG 无缝接班。
+             不用 mf-tb-js 做条件——那样会被 decorate() 提前合 class 废掉（旧坑）。
+           · 只对有 ICO 的 9 颗做 mask，第三方扩展的抽屉保留原生 FA 图标。 */
+        (function () {
+            function maskUrl(paths) {
+                var s = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.85' stroke-linecap='round' stroke-linejoin='round'>" + paths + "</svg>";
+                return "url(\"data:image/svg+xml," + encodeURIComponent(s) + "\")";
+            }
+            var p = [], B = "body:not(.mf-tb-ready) ";
+            p.push(B + "{--topBarBlockSize:0px!important}");
+            p.push(B + "#top-bar{background:transparent!important;border-bottom:0!important;box-shadow:none!important;pointer-events:none!important}");
+            p.push(B + "#top-settings-holder{position:fixed!important;top:8px!important;left:10px!important;right:auto!important;z-index:4000;width:max-content!important;height:auto!important;min-height:0!important;margin:0!important;padding:2px!important;box-sizing:border-box!important;display:flex!important;justify-content:flex-start!important;align-items:center!important;gap:2px;border-radius:13px;border:1px solid rgba(186,170,141,.78)!important;background:linear-gradient(105deg,rgba(255,255,255,.58) 0%,rgba(255,255,255,.14) 26%,rgba(255,255,255,0) 46%),linear-gradient(180deg,rgba(255,254,250,.985) 0%,rgba(250,244,232,.975) 52%,rgba(242,234,216,.965) 100%)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 -1px 0 rgba(150,136,110,.20),0 1px 1px rgba(90,78,58,.09),0 6px 14px -8px rgba(90,78,58,.28),0 16px 30px -22px rgba(69,65,58,.55)!important}");
+            p.push(B + "#top-settings-holder>.drawer{width:auto!important;flex:0 0 auto!important}");
+            p.push(B + "#top-settings-holder .drawer-icon{width:34px!important;height:34px!important;padding:0!important;display:flex!important;align-items:center!important;justify-content:center!important;border-radius:9px!important;color:var(--mf-ink)!important;opacity:.70!important}");
+            Object.keys(ICO).forEach(function (k) {
+                var u = maskUrl(ICO[k]);
+                p.push(B + "#" + k + " .drawer-icon::before{content:''!important;background:currentColor!important;-webkit-mask-image:" + u + "!important;mask-image:" + u + "!important;-webkit-mask-position:center!important;mask-position:center!important;-webkit-mask-size:21px 21px!important;mask-size:21px 21px!important;-webkit-mask-repeat:no-repeat!important;mask-repeat:no-repeat!important}");
+            });
+            MF_SKIN_BOOT += p.join("");
+        })();
+
         /* ★ 状态先进内存，localStorage 只当副本（预览沙箱里存不上，
            只靠它就会「点了没反应」）。存不住最多是记不住，绝不能是点不动。 */
         var cache = Object.create(null);
@@ -2339,6 +2367,14 @@
         /* ── 套状态 ─────────────────────────────────────────────────── */
         function apply() {
             if (!holder) return;
+            /* ★ v3.9.1：顶栏模块已接管 → 让骨架里的首屏预置样式整体退役，
+               由 skin.css 第11节 + JS 真 SVG 接班。加一次即可，永不移除：
+               · 还原原生时 mf-tb-js 被摘掉，但 mf-tb-ready 仍在 → 预置不复活，
+                 干净回到酒馆原生。
+               · 预置规则全挂 body:not(.mf-tb-ready)，加上后整段立即失效。 */
+            if (!document.body.classList.contains('mf-tb-ready')) {
+                document.body.classList.add('mf-tb-ready');
+            }
             /* 这两个 class 是第 11 节全部规则的总开关，挂在 body 上。
                值没变时连 toggle 都别调 —— 一旦 body 的 class 被写成一样的内容，
                浏览器仍有几率把整页标脏、重算一遍所有选择器。 */
@@ -2940,10 +2976,16 @@
             });
 
             holder.addEventListener('pointerdown', function (e) {
+                /* ★ v3.9.0：无条件先清长按残留。
+                   面板 .drawer-content 也在 holder 里，点面板时 hitOf 返回 false
+                   会在下面提前 return —— 若上一次长按把 longPressed 留在 true，
+                   这次点面板就会被 click 捕获监听器吞掉（点了没反应）。
+                   所以在 hitOf 之前就清，任何一次新按下都从干净状态开始。 */
+                longPressed = false;
                 var h = hitOf(e);
                 if (h === false) return;
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
-                sx = e.clientX; sy = e.clientY; longPressed = false;
+                sx = e.clientX; sy = e.clientY;
                 clearTimeout(pressTimer);
                 pressTimer = setTimeout(function () {
                     longPressed = true;

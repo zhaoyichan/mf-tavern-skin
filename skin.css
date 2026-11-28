@@ -106,24 +106,25 @@
       改颜色只改这里，下面全部引用变量，不要在别处散写色值。
    ───────────────────────────────────────────────────────────────────────── */
 :root {
-  --mf-bg:          #f4f2ec;   /* 窗口最底：米白（不是纯白，纯白刺眼） */
-  --mf-paper:       #fbf9f4;   /* 面板 / 输入框底 */
-  --mf-ink:         #45413a;   /* 正文：暖深灰，不是纯黑；对 paper 约 10:1 */
-  --mf-ink2:        #79746a;   /* 次要文字 */
-  --mf-ink3:        #a9a49a;   /* 最弱：时间戳、计数 */
-  --mf-line:        #e7e2d7;   /* 分隔线 */
-  --mf-line2:       #d9d3c5;   /* 深一档线：边框 */
-  --mf-accent:      #8d8271;   /* 暖灰褐 taupe（唯一强调色） */
-  --mf-accent-deep: #6f6555;   /* 深强调：名字 / hover */
-  --mf-accent-bg:   #efebe1;   /* 强调浅底：hover 背景 */
-  --mf-mark:        #b3a488;   /* 米金：用户消息细线 */
-  --mf-brown:       #b07c52;   /* 赭石：角色台词的虚线框（第 5 节） */
+  /* ★ v3.9.0 换肤：朱印·宣（朱红 + 宣纸白）。改这里 = 整站换色，下层全引用变量 */
+  --mf-bg:          #fdf9f3;   /* 窗口最底：宣纸白（暖白，不是纯白） */
+  --mf-paper:       #fffdf9;   /* 面板 / 输入框底：更亮的宣纸 */
+  --mf-ink:         #3b302b;   /* 正文：深墨褐，对 paper 对比充足 */
+  --mf-ink2:        #938379;   /* 次要文字：暖灰褐 */
+  --mf-ink3:        #b3a69a;   /* 最弱：时间戳、计数 */
+  --mf-line:        #ece0d5;   /* 分隔线：淡赭 */
+  --mf-line2:       #ddcfbe;   /* 深一档线：边框 */
+  --mf-accent:      #a83232;   /* 朱红：唯一强调色（名字 / 焦点 / 图标） */
+  --mf-accent-deep: #8a2626;   /* 深朱红：名字 / hover */
+  --mf-accent-bg:   #faf0ec;   /* 朱红浅底：hover 背景 */
+  --mf-mark:        #c06b62;   /* 朱红淡：用户消息细线 / 用户名 */
+  --mf-brown:       #b07c52;   /* 赭石：角色台词虚线框（第 5 节） */
   --mf-brown-bg:    #f7f0e3;   /* 台词虚线框的极淡米黄底 */
-  --mf-gold:        #b98a3e;   /* 鎏金：高级感台词样式的主色（第 5 节） */
-  --mf-gold2:       #d9b96c;   /* 亮金：渐变里的反光段 */
-  --mf-gold3:       #9a7434;   /* 暗金：渐变里的阴影段 */
-  --mf-red:         #8f2f26;   /* 朱砂红：金红搭配台词样式的强调色 */
-  --mf-ink-red:     #8f2f26;   /* 台词字色·深红（朱砂，配米白纸和金红样式） */
+  --mf-gold:        #b98a3e;   /* 鎏金：高级感台词样式主色（第 5 节） */
+  --mf-gold2:       #d9b96c;   /* 亮金：渐变反光段 */
+  --mf-gold3:       #9a7434;   /* 暗金：渐变阴影段 */
+  --mf-red:         #a83232;   /* 朱砂红：金红搭配台词样式强调色 */
+  --mf-ink-red:     #8f2f26;   /* 台词字色·深红（朱砂，配宣纸白和金红样式） */
   --mf-ink-brown:   #6b4a2f;   /* 台词字色·深棕（暖棕） */
   --mf-ink-green:   #3f5b4c;   /* 台词字色·墨绿（清雅备选） */
 }
@@ -173,7 +174,7 @@ body   { background-image: none !important; }
    3. 顶栏（那一排抽屉图标）
    ───────────────────────────────────────────────────────────────────────── */
 #top-bar {
-  background-color: rgba(244, 242, 236, 0.92) !important;   /* = --mf-bg 92% */
+  background-color: rgba(253, 249, 243, 0.92) !important;   /* = --mf-bg 92%（宣纸白） */
   box-shadow: none !important;
   border-bottom: 1px solid var(--mf-line) !important;
 }
@@ -601,11 +602,11 @@ body.mf-qr-js #mf-qr-handle { display: flex; }
    ───────────────────────────────────────────────────────────────────────── */
 
 :root {
-  --mf-paper2:  #f7f4ed;                  /* 比 paper 略深的底：条 / 卡 */
+  --mf-paper2:  #f7f1e8;                  /* 比 paper 略深的底：条 / 卡（宣纸暗一档） */
   --mf-ok:      #7d8a6f;                  /* 仅用于「AI」角色小标，不是主题绿 */
-  --mf-hl:      rgba(179, 164, 136, .34); /* 搜索命中 */
-  --mf-hl-cur:  rgba(179, 164, 136, .62); /* 当前命中 */
-  --mf-danger:  #a05a50;
+  --mf-hl:      rgba(168, 50, 50, .26);   /* 搜索命中：朱红淡底 */
+  --mf-hl-cur:  rgba(168, 50, 50, .52);   /* 当前命中：朱红深底 */
+  --mf-danger:  #a83232;                  /* 危险色：朱红 */
 }
 
 /* ── 10.1 预设选择条：原生那排按钮压小，别一进来就是三个大图标 ────────── */
@@ -1098,8 +1099,8 @@ body.mf-qr-js #mf-qr-handle { display: flex; }
   transition: transform .18s;
 }
 #completion_prompt_manager_list .prompt-manager-toggle-action.fa-toggle-on {
-  background: #6f6555;
-  box-shadow: inset 0 0 0 1px rgba(74, 66, 54, .2);
+  background: #8a2626;
+  box-shadow: inset 0 0 0 1px rgba(99, 28, 28, .2);
 }
 #completion_prompt_manager_list .prompt-manager-toggle-action.fa-toggle-on::after { transform: translateX(14px); }
 /* 插入点（marker）不能开关：原生给的是空 span，给个锁形状占位，别留个洞 */
@@ -1987,8 +1988,8 @@ body.mf-tb-js #top-settings-holder > .drawer[data-mf-hid="1"] { display: none !i
   transition: transform .2s cubic-bezier(.33, 0, .2, 1);
 }
 #mf-tb-mgmt .mf-mg-sw[aria-checked="true"] {
-  background: rgba(179, 164, 136, .58) !important;
-  border-color: rgba(160, 146, 120, .50) !important;
+  background: rgba(168, 50, 50, .55) !important;
+  border-color: rgba(138, 38, 38, .50) !important;
 }
 #mf-tb-mgmt .mf-mg-sw[aria-checked="true"]::after { transform: translateX(15px); }
 
@@ -2554,7 +2555,7 @@ body.mf-tb-js #top-settings-holder::before {
     background: rgba(150, 136, 110, .34);
     flex: none;
 }
-#rm_api_block .mf-pitem.on .mf-dt { background: var(--mf-mark); box-shadow: 0 0 0 2.5px rgba(179, 164, 136, .2); }
+#rm_api_block .mf-pitem.on .mf-dt { background: var(--mf-mark); box-shadow: 0 0 0 2.5px rgba(168, 50, 50, .2); }
 #rm_api_block .mf-pnm {
     font-size: 12.5px;
     color: var(--mf-ink2);
@@ -2706,8 +2707,8 @@ body.mf-tb-js #top-settings-holder::before {
 /* 模型相关控件高亮（用户强调：重点是模型） */
 #rm_api_block #custom_model_id,
 #rm_api_block #model_custom_select_fill {
-    border-color: rgba(179, 164, 136, .8) !important;
-    background: #fffdf8 !important;
+    border-color: rgba(168, 50, 50, .55) !important;
+    background: #fffdf9 !important;
     font-family: var(--mono, ui-monospace, monospace) !important;
     font-size: 12.5px !important;
 }
